@@ -2,7 +2,7 @@
  * Verify page for transaction hash verification
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import {
@@ -83,7 +83,7 @@ interface StepStatus {
 
 export default function VerifyPage() {
   const router = useRouter();
-  const { currentNetwork, chainId } = useWallet();
+  const { currentNetwork, wallet } = useWallet();
   
   // Lazy initialization of provider manager
   const getProviderManagerLazy = useCallback(() => {
@@ -180,7 +180,7 @@ export default function VerifyPage() {
 
     try {
       // Determine the network to use
-      const networkToUse = currentNetwork || getNetworkById(chainId || 137); // Default to Polygon
+      const networkToUse = currentNetwork || getNetworkById(wallet?.chainId || 137); // Default to Polygon
       if (!networkToUse) {
         throw new Error('No supported network available');
       }
@@ -209,15 +209,11 @@ export default function VerifyPage() {
       }
 
       const txDetails: TransactionDetails = {
+        transaction: tx,
+        receipt: receipt,
         success: true,
-        hash: tx.hash,
         blockNumber: receipt.blockNumber,
         timestamp: new Date(block.timestamp * 1000).toISOString(),
-        from: tx.from,
-        to: tx.to || '',
-        value: tx.value.toString(),
-        gasUsed: receipt.gasUsed.toString(),
-        status: receipt.status || 0,
         reportId: parseInt(hashToVerify.slice(-8), 16) // Generate mock report ID from hash
       };
 
@@ -232,14 +228,14 @@ export default function VerifyPage() {
       const result: VerificationResult = {
         isValid: true,
         transactionHash: hashToVerify,
-        blockNumber: txDetails.blockNumber,
-        timestamp: txDetails.timestamp,
+        blockNumber: txDetails.blockNumber || 0,
+        timestamp: txDetails.timestamp || new Date().toISOString(),
         ipfsHash: reportData.ipfsCIDs[0],
         reportHash: reportData.reportHash,
-        reportId: txDetails.reportId,
+        reportId: txDetails.reportId || 0,
         networkName: networkToUse.name,
         networkId: networkToUse.id,
-        explorerUrl: `${networkToUse.blockExplorerUrls[0]}/tx/${hashToVerify}`
+        explorerUrl: `${networkToUse.blockExplorerUrl}/tx/${hashToVerify}`
       };
 
       setVerificationResult(result);

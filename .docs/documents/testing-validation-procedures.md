@@ -358,7 +358,7 @@ import {
 } from '../../src/lib/ipfs';
 
 // Mock web3.storage
-jest.mock('@web3-storage/w3up-client');
+jest.mock('@storacha/client');
 
 describe('IPFS Integration', () => {
   describe('File Upload', () => {
@@ -368,7 +368,7 @@ describe('IPFS Integration', () => {
       
       // Mock successful upload
       const mockCID = 'QmTestCID123';
-      jest.mocked(require('@web3-storage/w3up-client').create).mockResolvedValue({
+      jest.mocked(require('@storacha/client').create).mockResolvedValue({
         uploadFile: jest.fn().mockResolvedValue(mockCID)
       });
       
@@ -382,7 +382,7 @@ describe('IPFS Integration', () => {
       const file = new File(['content'], 'test.txt');
       
       // Mock upload failure
-      jest.mocked(require('@web3-storage/w3up-client').create).mockRejectedValue(
+      jest.mocked(require('@storacha/client').create).mockRejectedValue(
         new Error('Upload failed')
       );
       
@@ -396,7 +396,7 @@ describe('IPFS Integration', () => {
       ];
       
       // Mock successful uploads
-      jest.mocked(require('@web3-storage/w3up-client').create).mockResolvedValue({
+      jest.mocked(require('@storacha/client').create).mockResolvedValue({
         uploadFile: jest.fn()
           .mockResolvedValueOnce('QmCID1')
           .mockResolvedValueOnce('QmCID2')

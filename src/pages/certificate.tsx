@@ -2,7 +2,7 @@
  * Certificate page for displaying and managing certificates
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import {
@@ -48,7 +48,7 @@ interface CertificateInfo {
 
 export default function CertificatePage() {
   const router = useRouter();
-  const { currentNetwork, chainId } = useWallet();
+  const { currentNetwork, wallet } = useWallet();
   const [transactionHash, setTransactionHash] = useState('');
   const [certificateInfo, setCertificateInfo] = useState<CertificateInfo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -78,7 +78,7 @@ export default function CertificatePage() {
 
     try {
       // Get current network or use default
-      const networkId = chainId || currentNetwork?.id || 137; // Default to Polygon
+      const networkId = wallet.chainId || currentNetwork?.id || 137; // Default to Polygon
       const network = getNetworkById(networkId);
       
       if (!network) {
@@ -142,9 +142,9 @@ export default function CertificatePage() {
         timestamp: txDetails.timestamp || new Date().toISOString(),
         ipfsHash: reportData.ipfsCIDs[0] || '', // Use first IPFS CID
         reportHash: reportData.reportHash,
-        explorerUrl: network.blockExplorerUrls?.[0] ? `${network.blockExplorerUrls[0]}/tx/${txHash}` : '',
+        explorerUrl: network.blockExplorerUrl ? `${network.blockExplorerUrl}/tx/${txHash}` : '',
         isValid: true,
-        networkName: network.chainName,
+        networkName: network.displayName,
         networkId: network.id
       };
 

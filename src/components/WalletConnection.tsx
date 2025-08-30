@@ -72,17 +72,15 @@ export default function WalletConnection({
   showNetworkSwitcher = true
 }: WalletConnectionProps) {
   const {
-    isConnected,
-    address,
-    chainId,
-    isConnecting,
-    error,
+    wallet,
     connect,
     disconnect,
     switchNetwork,
     addNetwork,
     currentNetwork
   } = useWallet();
+  
+  const { isConnected, address, chainId, isLoading: isConnecting, error } = wallet;
   
   const [showNetworkModal, setShowNetworkModal] = useState(false);
   const [isCheckingConnection, setIsCheckingConnection] = useState(true);
@@ -131,14 +129,10 @@ export default function WalletConnection({
         return;
       }
       
-      const result = await connect();
+      await connect();
       
-      if (result.success && result.address) {
-        toast.success('Wallet connected successfully!');
-        onConnect?.(result.address);
-      } else {
-        toast.error(result.error || 'Failed to connect wallet');
-      }
+      // Connection success will be handled by the useEffect that watches isConnected
+      toast.success('Wallet connected successfully!');
     } catch (error) {
       console.error('Wallet connection error:', error);
       
@@ -164,7 +158,7 @@ export default function WalletConnection({
   // Switch to a specific network
   const handleSwitchNetwork = async (network: SupportedNetwork) => {
     try {
-      const result = await switchNetwork(network.chainId);
+      const result = await switchNetwork(network.id);
       
       if (result.success) {
         toast.success(`Switched to ${network.displayName}`);
@@ -173,9 +167,9 @@ export default function WalletConnection({
         // If switch failed, try to add the network
         if (result.error?.includes('4902') || result.error?.includes('network not added')) {
           const addResult = await addNetwork(network);
-          if (addResult.success) {
+          if (addResult) {
             // Try switching again after adding
-            const switchResult = await switchNetwork(network.chainId);
+            const switchResult = await switchNetwork(network.id);
             if (switchResult.success) {
               toast.success(`Added and switched to ${network.displayName}`);
               setShowNetworkModal(false);
@@ -183,7 +177,7 @@ export default function WalletConnection({
               throw new Error(switchResult.error || 'Failed to switch network after adding');
             }
           } else {
-            throw new Error(addResult.error || 'Failed to add network');
+            throw new Error('Failed to add network');
           }
         } else {
           throw new Error(result.error || 'Failed to switch network');
@@ -328,7 +322,7 @@ export default function WalletConnection({
                   const displayInfo = getNetworkDisplayInfo(network);
                   return (
                     <button
-                      key={network.chainId}
+                      key={network.id}
                       onClick={() => handleSwitchNetwork(network)}
                       className={`w-full flex items-center space-x-3 p-3 rounded-lg border ${displayInfo.bgColor} ${displayInfo.borderColor} hover:opacity-80 transition-opacity`}
                     >
@@ -367,12 +361,12 @@ export function useWalletConnection() {
   const walletHook = useWallet();
   
   return {
-    isConnected: walletHook.isConnected,
-    address: walletHook.address,
-    networkId: walletHook.chainId,
+    isConnected: walletHook.wallet.isConnected,
+    address: walletHook.wallet.address,
+    networkId: walletHook.wallet.chainId,
     networkName: walletHook.currentNetwork?.displayName || null,
-    isCorrectNetwork: walletHook.currentNetwork ? enabledNetworks.some(n => n.chainId === walletHook.chainId) : false,
-    isConnecting: walletHook.isConnecting,
-    error: walletHook.error
+    isCorrectNetwork: walletHook.currentNetwork ? getEnabledNetworks().some(n => n.id === walletHook.wallet.chainId) : false,
+    isConnecting: walletHook.wallet.isLoading,
+    error: walletHook.wallet.error
   };
 }

@@ -183,10 +183,9 @@ class NetworkProviderManager {
     }
 
     const isBlockDAG = this.isBlockDAGNetwork(chainId);
-    const config = isBlockDAG ? this.config.blockdagConfig : this.config;
-    const maxRetries = isBlockDAG ? (config?.retryAttempts || 5) : this.config.maxRetries;
-    const timeout = isBlockDAG ? (config?.timeout || 30000) : this.config.timeout;
-    const retryDelay = isBlockDAG ? (config?.retryDelay || 2000) : this.config.retryDelay;
+    const maxRetries = isBlockDAG ? (this.config.blockdagConfig?.retryAttempts || 5) : this.config.maxRetries;
+    const timeout = isBlockDAG ? (this.config.blockdagConfig?.timeout || 30000) : this.config.timeout;
+    const retryDelay = isBlockDAG ? (this.config.blockdagConfig?.retryDelay || 2000) : this.config.retryDelay;
 
     this.incrementRequestCount(chainId);
 
@@ -483,10 +482,7 @@ class NetworkProviderManager {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  private isBlockDAGNetwork(chainId: number): boolean {
-    // BlockDAG Testnet: 19188, BlockDAG Mainnet: 19189 (placeholder)
-    return chainId === 19188 || chainId === 19189;
-  }
+
 
   public destroy(): void {
     if (this.healthCheckInterval) {

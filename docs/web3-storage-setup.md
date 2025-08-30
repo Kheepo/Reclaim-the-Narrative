@@ -4,7 +4,7 @@ This guide explains how to set up web3.storage for IPFS uploads in the GBV Repor
 
 ## Overview
 
-The platform uses `@web3-storage/w3up-client` version 17.3.0, which implements UCAN (User Controlled Authorization Networks) for authentication. This requires proper setup of Agents and Spaces for blob upload permissions.
+The platform uses `@storacha/client` version 17.3.0, which implements UCAN (User Controlled Authorization Networks) for authentication. This requires proper setup of Agents and Spaces for blob upload permissions.
 
 ## Setup Process
 

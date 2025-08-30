@@ -168,10 +168,10 @@ function toLegacyNetworkConfig(network: SupportedNetwork): NetworkConfig {
 
 // Legacy networks mapping for backward compatibility
 export const NETWORKS: Record<string, NetworkConfig> = {
-  amoy: toLegacyNetworkConfig(SUPPORTED_NETWORKS.POLYGON_AMOY),
-  polygon: toLegacyNetworkConfig(SUPPORTED_NETWORKS.POLYGON_MAINNET),
-  blockdag_testnet: toLegacyNetworkConfig(SUPPORTED_NETWORKS.BLOCKDAG_TESTNET),
-  blockdag_mainnet: toLegacyNetworkConfig(SUPPORTED_NETWORKS.BLOCKDAG_MAINNET)
+  amoy: toLegacyNetworkConfig(SUPPORTED_NETWORKS[80002]), // POLYGON_AMOY
+  polygon: toLegacyNetworkConfig(SUPPORTED_NETWORKS[137]), // POLYGON_MAINNET
+  blockdag_testnet: toLegacyNetworkConfig(SUPPORTED_NETWORKS[1043]), // BLOCKDAG_TESTNET
+  blockdag_mainnet: toLegacyNetworkConfig(SUPPORTED_NETWORKS[1044]) // BLOCKDAG_MAINNET
 };
 
 /**

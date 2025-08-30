@@ -3,7 +3,7 @@
  * Handles uploading encrypted files to IPFS via web3.storage
  */
 
-import * as Client from '@web3-storage/w3up-client'
+import * as Client from '@storacha/client'
 import type { UnknownLink } from 'multiformats'
 
 export interface IPFSUploadResult {
@@ -78,7 +78,7 @@ export const setupWeb3Storage = async (email: string, spaceName: string = 'GBV-R
     
     // Login with email (this will send a verification email)
     console.log(`Sending verification email to ${email}...`)
-    const account = await client.login(email)
+    const account = await client.login(email as `${string}@${string}`)
     console.log('Please check your email and click the verification link.')
     
     // Create a space for uploads
@@ -213,7 +213,7 @@ export async function uploadEncryptedDataToIPFS(encryptedData: Uint8Array, filen
       const client = await initializeWeb3Storage()
       
       // Create a File object from the encrypted data
-      const file = new File([encryptedData], filename, { type: 'application/octet-stream' })
+      const file = new File([new Uint8Array(encryptedData)], filename, { type: 'application/octet-stream' })
       
       // Upload the file
       const cid = await client.uploadFile(file)

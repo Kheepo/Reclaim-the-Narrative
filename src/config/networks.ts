@@ -314,15 +314,15 @@ export function toWagmiChain(network: SupportedNetwork): Chain {
     
     // Add fallback RPC URLs for BlockDAG networks
     if (network.id === 1043) { // BlockDAG Testnet
-      baseChain.rpcUrls.default.http.push('https://rpc-backup.primordial.bdagscan.com');
-      baseChain.rpcUrls.public.http.push('https://rpc-backup.primordial.bdagscan.com');
+      baseChain.rpcUrls.default.http = [...baseChain.rpcUrls.default.http, 'https://rpc-backup.primordial.bdagscan.com'];
+      baseChain.rpcUrls.public.http = [...baseChain.rpcUrls.public.http, 'https://rpc-backup.primordial.bdagscan.com'];
     }
     
     // Add custom properties for BlockDAG
     return {
       ...baseChain,
       fees: {
-        defaultPriorityFee: 1000000000, // 1 gwei for BlockDAG
+        defaultPriorityFee: BigInt(1000000000), // 1 gwei for BlockDAG
       },
       formatters: {
         // Custom formatters for BlockDAG if needed

@@ -33,8 +33,7 @@ import { generateCertificate, downloadCertificate, createCertificateData } from 
 import { LoadingSpinner, LoadingButton, ProgressBar, LoadingOverlay } from '../components/Loading';
 import { FadeIn, StatusCard, AnimatedIcon, StaggeredAnimation } from '../components/Animations';
 import { useToastHelpers } from '../components/Toast';
-// TODO: Web3StorageSetup component needs to be created
-// import Web3StorageSetup from '../components/Web3StorageSetup';
+import Web3StorageSetup from '../components/Web3StorageSetup';
 import { checkWeb3StorageStatus } from '../lib/ipfs';
 
 interface ReportForm {
@@ -335,7 +334,9 @@ export default function SubmitPage() {
       setCurrentOperation('Uploading to IPFS...');
       
       // Upload to IPFS
-      const ipfsResult = await uploadEncryptedDataToIPFS(encryptedData.encryptedData, `report-${Date.now()}.json`);
+      // Convert Base64 string to Uint8Array
+      const encryptedDataBytes = Uint8Array.from(atob(encryptedData.encryptedData), c => c.charCodeAt(0));
+      const ipfsResult = await uploadEncryptedDataToIPFS(encryptedDataBytes, `report-${Date.now()}.json`);
       const ipfsHash = ipfsResult.cid;
       
       info('Data uploaded to IPFS');
