@@ -74,12 +74,44 @@ export async function initializeWeb3Storage(): Promise<Client.Client> {
 // Setup function for initial configuration (should be called once)
 export const setupWeb3Storage = async (email: string, spaceName: string = 'GBV-Reporting-Platform'): Promise<void> => {
   try {
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(email)) {
+      throw new Error('Please enter a valid email address')
+    }
+    
     const client = await Client.create()
     
     // Login with email (this will send a verification email)
     console.log(`Sending verification email to ${email}...`)
-    const account = await client.login(email as `${string}@${string}`)
-    console.log('Please check your email and click the verification link.')
+    
+    try {
+      const account = await client.login(email as `${string}@${string}`)
+      console.log('Verification email sent successfully!')
+      console.log('Please check your email (including spam folder) and click the verification link.')
+      
+      // Additional helpful information
+      console.log('Note: The verification email may take a few minutes to arrive.')
+      console.log('If you don\'t receive the email, please:')
+      console.log('1. Check your spam/junk folder')
+      console.log('2. Ensure the email address is correct')
+      console.log('3. Try again with a different email if needed')
+      
+    } catch (loginError) {
+      console.error('Login error details:', loginError)
+      
+      if (loginError instanceof Error) {
+        if (loginError.message.includes('rate limit')) {
+          throw new Error('Too many requests. Please wait a few minutes before trying again.')
+        } else if (loginError.message.includes('invalid email')) {
+          throw new Error('Invalid email address format. Please check and try again.')
+        } else if (loginError.message.includes('network')) {
+          throw new Error('Network error. Please check your internet connection and try again.')
+        }
+      }
+      
+      throw new Error(`Failed to send verification email: ${loginError instanceof Error ? loginError.message : 'Unknown error'}. Please try again or contact support if the issue persists.`)
+    }
     
     // Note: We don't create spaces here immediately because the email verification
     // needs to be completed first. The space creation will happen after email verification
@@ -427,23 +459,65 @@ export async function getFileFromIPFS(cid: string): Promise<Uint8Array> {
 /**
  * Check if the web3.storage client is properly configured
  */
-export async function checkWeb3StorageStatus(): Promise<{ configured: boolean; hasSpaces: boolean; currentSpace?: string }> {
+export async function checkWeb3StorageStatus(): Promise<{ configured: boolean; hasSpaces: boolean; currentSpace?: string; spaces?: any[]; error?: string }> {
   try {
+    console.log('Checking Web3.Storage status...')
     const client = await Client.create()
-    const accounts = client.accounts()
-    const spaces = client.spaces()
+    
+    // Check if we have an account (user is logged in)
+    const account = client.account()
+    console.log('Account status:', account ? 'Found' : 'Not found')
+    
+    if (!account) {
+      console.log('No account found - user needs to complete email verification')
+      return { configured: false, hasSpaces: false, error: 'Email verification not completed' }
+    }
+    
+    // Get spaces
+    const spaces = []
+    try {
+      for await (const space of client.spaces()) {
+        spaces.push(space)
+        console.log('Found space:', space.name || 'Unnamed space')
+      }
+    } catch (spacesError) {
+      console.error('Error fetching spaces:', spacesError)
+      return { 
+        configured: true, 
+        hasSpaces: false, 
+        spaces: [],
+        error: 'Could not fetch spaces - you may need to create one'
+      }
+    }
+    
     const currentSpace = client.currentSpace()
     
+    console.log(`Web3.Storage status: configured=true, spaces=${spaces.length}`)
+    
     return {
-      configured: Object.keys(accounts).length > 0,
+      configured: true,
       hasSpaces: spaces.length > 0,
-      currentSpace: currentSpace?.did()
+      currentSpace: currentSpace?.did(),
+      spaces
     }
   } catch (error) {
     console.error('Failed to check web3.storage status:', error)
+    
+    let errorMessage = 'Unknown error'
+    if (error instanceof Error) {
+      if (error.message.includes('network')) {
+        errorMessage = 'Network error - please check your connection'
+      } else if (error.message.includes('unauthorized')) {
+        errorMessage = 'Email verification required'
+      } else {
+        errorMessage = error.message
+      }
+    }
+    
     return {
       configured: false,
-      hasSpaces: false
+      hasSpaces: false,
+      error: errorMessage
     }
   }
 }

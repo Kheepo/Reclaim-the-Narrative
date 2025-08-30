@@ -160,10 +160,13 @@ export default function SubmitPage() {
       case 2:
         return true; // File upload is optional
       case 3:
-        return encryptionPassword && encryptionPassword.length >= 8 && 
-               web3StorageStatus?.configured && web3StorageStatus?.hasSpaces;
+        // Allow users to stay on step 3 even if Web3.Storage is not configured yet
+        // They need to be on this step to configure it
+        return true;
       case 4:
-        return isConnected && address;
+        // Only validate Web3.Storage and encryption for final submission
+        return isConnected && address && encryptionPassword && encryptionPassword.length >= 8 && 
+               web3StorageStatus?.configured && web3StorageStatus?.hasSpaces;
       default:
         return false;
     }

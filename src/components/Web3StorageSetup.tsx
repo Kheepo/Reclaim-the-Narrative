@@ -33,7 +33,14 @@ export const Web3StorageSetup: React.FC<Web3StorageSetupProps> = ({ onSetupCompl
   const handleSetup = async (e: React.FormEvent) => {
     e.preventDefault()
     
-    if (!email.trim()) {
+    if (!email.trim() || !spaceName.trim()) {
+      setError('Please fill in all fields')
+      return
+    }
+
+    // Validate email format on frontend as well
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(email.trim())) {
       setError('Please enter a valid email address')
       return
     }
@@ -45,8 +52,7 @@ export const Web3StorageSetup: React.FC<Web3StorageSetupProps> = ({ onSetupCompl
     try {
       await setupWeb3Storage(email.trim(), spaceName.trim())
       setSuccess(
-        'Setup initiated! Please check your email and click the verification link. ' +
-        'After verification, refresh this page to continue.'
+        'Verification email sent successfully! Please check your email (including spam folder) and click the verification link, then refresh the status below.'
       )
       
       // Check status again after a delay
@@ -59,11 +65,13 @@ export const Web3StorageSetup: React.FC<Web3StorageSetupProps> = ({ onSetupCompl
       }
     } catch (error) {
       console.error('Setup failed:', error)
-      setError(
-        error instanceof Error 
-          ? error.message 
-          : 'Setup failed. Please try again.'
-      )
+      const errorMessage = error instanceof Error ? error.message : 'Setup failed'
+      setError(errorMessage)
+      
+      // Log additional debugging information
+      console.log('Email used:', email.trim())
+      console.log('Space name:', spaceName.trim())
+      console.log('Error details:', error)
     } finally {
       setIsLoading(false)
     }
@@ -71,8 +79,23 @@ export const Web3StorageSetup: React.FC<Web3StorageSetupProps> = ({ onSetupCompl
 
   const handleRefreshStatus = async () => {
     setIsLoading(true)
-    await checkStatus()
-    setIsLoading(false)
+    setError(null)
+    try {
+      const newStatus = await checkWeb3StorageStatus()
+      setStatus(newStatus)
+      
+      // Display any error from the status check
+      if (newStatus.error) {
+        setError(`Status check: ${newStatus.error}`)
+      }
+      
+      console.log('Status refreshed:', newStatus)
+    } catch (error) {
+      console.error('Failed to refresh status:', error)
+      setError('Failed to check status. Please try again.')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const handleCreateSpace = async () => {
@@ -210,7 +233,19 @@ export const Web3StorageSetup: React.FC<Web3StorageSetupProps> = ({ onSetupCompl
             Web3.Storage Setup Required
           </h3>
           <div className="mt-2 text-sm text-yellow-700">
-            <p>To upload files to IPFS, you need to configure web3.storage first.</p>
+            <p>To securely store your report files, we need to set up Web3.Storage.
+            This is a one-time setup process that requires email verification.</p>
+          </div>
+          
+          <div className="bg-yellow-100 border border-yellow-300 rounded p-3 mt-4">
+            <h4 className="font-semibold text-yellow-800 mb-2">Setup Process:</h4>
+            <ol className="text-sm text-yellow-700 list-decimal list-inside space-y-1">
+              <li>Enter your email address and choose a space name</li>
+              <li>Click "Send Verification Email"</li>
+              <li>Check your email (including spam folder) for the verification link</li>
+              <li>Click the verification link in the email</li>
+              <li>Return here and click "Refresh Status" to continue</li>
+            </ol>
           </div>
           
           {status && (
