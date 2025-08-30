@@ -1,0 +1,27 @@
+name: Mirror Repository
+
+on:
+  push:
+    branches:
+      - main   # Change if your default branch is different
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history and branches
+
+      - name: Push to target repo
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+
+          # Add target repository as a remote
+          git remote add mirror https://x-access-token:${{ secrets.TARGET_REPO_TOKEN }}@github.com/Kheepo/Reclaim-the-Narrative.git
+
+          # Push everything (branches + tags)
+          git push --mirror mirror
