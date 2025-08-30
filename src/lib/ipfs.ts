@@ -104,7 +104,7 @@ export const createWeb3StorageSpace = async (spaceName: string = 'GBV-Reporting-
     }
     
     // Get the first account (should be the one we just verified)
-    const accountEmail = Object.keys(accounts)[0]
+    const accountEmail = Object.keys(accounts)[0] as keyof typeof accounts
     const account = accounts[accountEmail]
     
     // Create a space for uploads
