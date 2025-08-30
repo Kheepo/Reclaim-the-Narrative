@@ -33,6 +33,9 @@ import { generateCertificate, downloadCertificate, createCertificateData } from 
 import { LoadingSpinner, LoadingButton, ProgressBar, LoadingOverlay } from '../components/Loading';
 import { FadeIn, StatusCard, AnimatedIcon, StaggeredAnimation } from '../components/Animations';
 import { useToastHelpers } from '../components/Toast';
+// TODO: Web3StorageSetup component needs to be created
+// import Web3StorageSetup from '../components/Web3StorageSetup';
+import { checkWeb3StorageStatus } from '../lib/ipfs';
 
 interface ReportForm {
   title: string;
@@ -91,6 +94,12 @@ export default function SubmitPage() {
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [currentOperation, setCurrentOperation] = useState<string>('');
+  const [web3StorageStatus, setWeb3StorageStatus] = useState<{
+    configured: boolean;
+    hasSpaces: boolean;
+    currentSpace?: string;
+  } | null>(null);
+  const [isCheckingWeb3Storage, setIsCheckingWeb3Storage] = useState(false);
   
   // Wizard state
   const [currentStep, setCurrentStep] = useState(1);
@@ -102,6 +111,30 @@ export default function SubmitPage() {
     { id: 3, name: 'Security Settings', icon: LockClosedIcon },
     { id: 4, name: 'Review & Submit', icon: CheckCircleIcon }
   ];
+
+  // Check web3.storage status on component mount
+  useEffect(() => {
+    checkWeb3StorageStatusAsync();
+  }, []);
+
+  // Function to check web3.storage status
+  const checkWeb3StorageStatusAsync = async () => {
+    setIsCheckingWeb3Storage(true);
+    try {
+      const status = await checkWeb3StorageStatus();
+      setWeb3StorageStatus(status);
+    } catch (error) {
+      console.error('Failed to check web3.storage status:', error);
+      setWeb3StorageStatus({ configured: false, hasSpaces: false });
+    } finally {
+      setIsCheckingWeb3Storage(false);
+    }
+  };
+
+  // Handle web3.storage setup completion
+  const handleWeb3StorageSetupComplete = () => {
+    checkWeb3StorageStatusAsync();
+  };
 
   // Wizard navigation functions
   const nextStep = () => {
@@ -128,7 +161,8 @@ export default function SubmitPage() {
       case 2:
         return true; // File upload is optional
       case 3:
-        return encryptionPassword && encryptionPassword.length >= 8;
+        return encryptionPassword && encryptionPassword.length >= 8 && 
+               web3StorageStatus?.configured && web3StorageStatus?.hasSpaces;
       case 4:
         return isConnected && address;
       default:
@@ -737,10 +771,17 @@ export default function SubmitPage() {
                 <div className="mb-6">
                   <h2 className="text-2xl font-bold text-slate-900 mb-2">Security Settings</h2>
                   <p className="text-slate-600">
-                    Your report will be encrypted before being stored. Please set a strong password that you will remember.
+                    Configure encryption and IPFS storage settings for your report.
                   </p>
                 </div>
                 
+                {/* Web3.Storage Setup */}
+                <div className="mb-8">
+                  <h3 className="text-lg font-semibold text-slate-800 mb-4">IPFS Storage Configuration</h3>
+                  <Web3StorageSetup onSetupComplete={handleWeb3StorageSetupComplete} />
+                </div>
+                
+                {/* Encryption Password */}
                 <div>
                   <label htmlFor="encryptionPassword" className="block text-sm font-semibold text-slate-700 mb-3">
                     Encryption Password *
@@ -755,11 +796,13 @@ export default function SubmitPage() {
                       placeholder="Enter a strong password to encrypt your report"
                       required
                       minLength={8}
+                      disabled={!web3StorageStatus?.configured || !web3StorageStatus?.hasSpaces}
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
                       className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-400 hover:text-slate-600 transition-colors duration-200"
+                      disabled={!web3StorageStatus?.configured || !web3StorageStatus?.hasSpaces}
                     >
                       {showPassword ? (
                         <EyeSlashIcon className="h-5 w-5" />
@@ -771,6 +814,11 @@ export default function SubmitPage() {
                   <p className="mt-3 text-sm text-slate-600">
                     This password encrypts your report data. Keep it safe - it cannot be recovered if lost.
                   </p>
+                  {(!web3StorageStatus?.configured || !web3StorageStatus?.hasSpaces) && (
+                    <p className="mt-2 text-sm text-amber-600">
+                      Please configure IPFS storage first before setting an encryption password.
+                    </p>
+                  )}
                 </div>
                 </div>
               </FadeIn>

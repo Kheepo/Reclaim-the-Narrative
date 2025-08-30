@@ -3,11 +3,14 @@
  * Handles uploading encrypted files to IPFS via web3.storage
  */
 
-import { create } from '@web3-storage/w3up-client';
+import * as Client from '@web3-storage/w3up-client'
+import type { UnknownLink } from 'multiformats'
 
 export interface IPFSUploadResult {
   cid: string;
-  url: string;
+  url?: string;
+  size?: number;
+  name?: string;
 }
 
 export interface FileUpload {
@@ -16,51 +19,126 @@ export interface FileUpload {
   type: string;
 }
 
+// Initialize Web3.Storage client
+let web3StorageClient: Client.Client | null = null
+
 /**
  * Initialize web3.storage client
  */
-export async function initializeWeb3Storage(): Promise<any> {
-  const client = await create();
-  
+export async function initializeWeb3Storage(): Promise<Client.Client> {
+  if (web3StorageClient) {
+    return web3StorageClient
+  }
+
   try {
-    // Check if we have a stored delegation
-    const storedDelegation = localStorage.getItem('w3up-delegation');
-    if (storedDelegation) {
-      try {
-        const delegation = JSON.parse(storedDelegation);
-        await client.addSpace(delegation);
-      } catch (error) {
-        console.warn('Failed to restore delegation:', error);
+    // Create client with proper agent management
+    web3StorageClient = await Client.create()
+    
+    // Check if we have any accounts configured
+    const accounts = web3StorageClient.accounts()
+    
+    if (!Object.keys(accounts).length) {
+      throw new Error(
+        'No web3.storage account configured. Please run the setup process:\n' +
+        '1. Create a client and login with your email\n' +
+        '2. Create a space for uploads\n' +
+        '3. Associate the space with your account\n' +
+        'See documentation for setup instructions.'
+      )
+    }
+
+    // Check if we have a current space
+    const currentSpace = web3StorageClient.currentSpace()
+    if (!currentSpace) {
+      // Try to use the first available space
+      const spaces = web3StorageClient.spaces()
+      if (spaces.length > 0) {
+        await web3StorageClient.setCurrentSpace(spaces[0].did())
+      } else {
+        throw new Error(
+          'No spaces available. Please create a space first:\n' +
+          'const space = await client.createSpace("my-space")\n' +
+          'await space.save()\n' +
+          'await account.provision(space.did())'
+        )
       }
     }
-    
-    // Check if client has any spaces
-    const spaces = client.spaces();
-    if (spaces.length === 0) {
-      // Create a new space if none exists
-      const space = await client.createSpace('gbv-reporting-space');
-      await client.setCurrentSpace(space.did());
-      
-      // Store the space delegation for future use
-      const delegation = await client.createDelegation(space, [
-        'space/blob/add',
-        'space/index/add',
-        'filecoin/offer',
-        'upload/add'
-      ]);
-      
-      localStorage.setItem('w3up-delegation', JSON.stringify(delegation));
-    } else {
-      // Use the first available space
-      const firstSpace = spaces[0];
-      await client.setCurrentSpace(firstSpace.did());
-    }
-    
-    return client;
+
+    return web3StorageClient
   } catch (error) {
-    console.error('Failed to initialize web3.storage client:', error);
-    throw new Error(`Web3.Storage initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    console.error('Failed to initialize Web3.Storage client:', error)
+    throw error
   }
+}
+
+// Setup function for initial configuration (should be called once)
+export const setupWeb3Storage = async (email: string, spaceName: string = 'GBV-Reporting-Platform'): Promise<void> => {
+  try {
+    const client = await Client.create()
+    
+    // Login with email (this will send a verification email)
+    console.log(`Sending verification email to ${email}...`)
+    const account = await client.login(email)
+    console.log('Please check your email and click the verification link.')
+    
+    // Create a space for uploads
+    const space = await client.createSpace(spaceName)
+    
+    // Save the space to the store and set as current
+    await space.save()
+    
+    // Associate this space with the account
+    await account.provision(space.did())
+    
+    console.log(`Space "${spaceName}" created and provisioned successfully!`)
+    console.log(`Space DID: ${space.did()}`)
+    
+    return
+  } catch (error) {
+    console.error('Failed to setup Web3.Storage:', error)
+    throw error
+  }
+}
+
+/**
+ * Upload a single file to IPFS with retry mechanism
+ */
+export async function uploadFileToIPFS(file: File, maxRetries: number = 3): Promise<{ cid: string; url: string }> {
+  let lastError: Error | null = null
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const client = await initializeWeb3Storage()
+      const cid = await client.uploadFile(file)
+      return {
+        cid: cid.toString(),
+        url: `https://${cid}.ipfs.w3s.link`
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Unknown error')
+      
+      if (error instanceof Error && error.message.includes('space/blob/add')) {
+        throw new Error('IPFS upload failed: Missing blob/add permission. Please check your web3.storage space delegation.')
+      }
+      
+      if (error instanceof Error && error.message.includes('account is not configured')) {
+        throw new Error('IPFS upload failed: Web3.storage account not configured. Please set up your account first.')
+      }
+      
+      console.warn(`Upload attempt ${attempt} failed:`, lastError.message)
+      
+      // Don't retry on the last attempt
+      if (attempt === maxRetries) {
+        break
+      }
+      
+      // Wait before retrying (exponential backoff)
+      const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000)
+      await new Promise(resolve => setTimeout(resolve, delay))
+    }
+  }
+  
+  throw new Error(`Failed to upload file to IPFS after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`)
 }
 
 /**
@@ -89,6 +167,26 @@ export async function uploadToIPFS(file: File, filename?: string): Promise<IPFSU
 }
 
 /**
+ * Upload multiple files to IPFS with retry mechanism
+ */
+export async function uploadFilesToIPFS(files: File[], maxRetries: number = 3): Promise<{ cid: string; url: string }[]> {
+  const results: { cid: string; url: string }[] = []
+  
+  for (const file of files) {
+    try {
+      const result = await uploadFileToIPFS(file, maxRetries)
+      results.push(result)
+    } catch (error) {
+      // If one file fails, we still want to know which files succeeded
+      console.error(`Failed to upload file ${file.name}:`, error)
+      throw new Error(`Failed to upload file "${file.name}": ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+  
+  return results
+}
+
+/**
  * Upload multiple files to IPFS
  */
 export async function uploadMultipleToIPFS(files: FileUpload[]): Promise<IPFSUploadResult[]> {
@@ -105,9 +203,57 @@ export async function uploadMultipleToIPFS(files: FileUpload[]): Promise<IPFSUpl
 }
 
 /**
+ * Upload encrypted data to IPFS with retry mechanism
+ */
+export async function uploadEncryptedDataToIPFS(encryptedData: Uint8Array, filename: string, maxRetries: number = 3): Promise<IPFSUploadResult> {
+  let lastError: Error | null = null
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const client = await initializeWeb3Storage()
+      
+      // Create a File object from the encrypted data
+      const file = new File([encryptedData], filename, { type: 'application/octet-stream' })
+      
+      // Upload the file
+      const cid = await client.uploadFile(file)
+      
+      return {
+        cid: cid.toString(),
+        size: encryptedData.length,
+        name: filename
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Unknown error')
+      
+      if (error instanceof Error && error.message.includes('space/blob/add')) {
+        throw new Error('IPFS upload failed: No permission to add blobs to space. Please ensure proper space delegation.')
+      }
+      
+      if (error instanceof Error && error.message.includes('account is not configured')) {
+        throw new Error('IPFS upload failed: Web3.storage account not configured. Please set up your account first.')
+      }
+      
+      console.warn(`Encrypted data upload attempt ${attempt} failed:`, lastError.message)
+      
+      // Don't retry on the last attempt
+      if (attempt === maxRetries) {
+        break
+      }
+      
+      // Wait before retrying (exponential backoff)
+      const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000)
+      await new Promise(resolve => setTimeout(resolve, delay))
+    }
+  }
+  
+  throw new Error(`Failed to upload encrypted data to IPFS after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`)
+}
+
+/**
  * Upload encrypted data as a file to IPFS
  */
-export async function uploadEncryptedDataToIPFS(
+export async function uploadEncryptedDataStringToIPFS(
   encryptedData: string,
   filename: string,
   mimeType: string = 'application/octet-stream'
@@ -120,9 +266,61 @@ export async function uploadEncryptedDataToIPFS(
 }
 
 /**
- * Upload JSON data to IPFS
+ * Upload JSON data to IPFS with retry mechanism
  */
-export async function uploadJSONToIPFS(
+export async function uploadJSONToIPFS(data: any, filename: string = 'data.json', maxRetries: number = 3): Promise<IPFSUploadResult> {
+  let lastError: Error | null = null
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const client = await initializeWeb3Storage()
+      
+      // Convert JSON to string and then to Uint8Array
+      const jsonString = JSON.stringify(data, null, 2)
+      const jsonBytes = new TextEncoder().encode(jsonString)
+      
+      // Create a File object
+      const file = new File([jsonBytes], filename, { type: 'application/json' })
+      
+      // Upload the file
+      const cid = await client.uploadFile(file)
+      
+      return {
+        cid: cid.toString(),
+        size: jsonBytes.length,
+        name: filename
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Unknown error')
+      
+      if (error instanceof Error && error.message.includes('space/blob/add')) {
+        throw new Error('IPFS upload failed: No permission to add blobs to space. Please ensure proper space delegation.')
+      }
+      
+      if (error instanceof Error && error.message.includes('account is not configured')) {
+        throw new Error('IPFS upload failed: Web3.storage account not configured. Please set up your account first.')
+      }
+      
+      console.warn(`JSON upload attempt ${attempt} failed:`, lastError.message)
+      
+      // Don't retry on the last attempt
+      if (attempt === maxRetries) {
+        break
+      }
+      
+      // Wait before retrying (exponential backoff)
+      const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000)
+      await new Promise(resolve => setTimeout(resolve, delay))
+    }
+  }
+  
+  throw new Error(`Failed to upload JSON to IPFS after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`)
+}
+
+/**
+ * Upload JSON data to IPFS (legacy method)
+ */
+export async function uploadJSONToIPFSLegacy(
   data: any,
   filename: string = 'data.json'
 ): Promise<IPFSUploadResult> {
@@ -148,6 +346,79 @@ export async function retrieveFromIPFS(cid: string): Promise<Response> {
   } catch (error) {
     console.error('IPFS retrieval failed:', error);
     throw new Error(`Failed to retrieve from IPFS: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+/**
+ * Retrieve JSON data from IPFS
+ */
+export async function getJSONFromIPFS(cid: string): Promise<any> {
+  try {
+    // Use the web3.storage gateway for retrieval
+    const response = await fetch(`https://w3s.link/ipfs/${cid}`)
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+    
+    const data = await response.json()
+    return data
+  } catch (error) {
+    console.error('Failed to retrieve JSON from IPFS:', error)
+    
+    if (error instanceof Error) {
+      throw new Error(`IPFS retrieval failed: ${error.message}`)
+    }
+    
+    throw new Error('IPFS retrieval failed: Unknown error')
+  }
+}
+
+/**
+ * Retrieve file data from IPFS
+ */
+export async function getFileFromIPFS(cid: string): Promise<Uint8Array> {
+  try {
+    const response = await fetch(`https://w3s.link/ipfs/${cid}`)
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+    
+    const arrayBuffer = await response.arrayBuffer()
+    return new Uint8Array(arrayBuffer)
+  } catch (error) {
+    console.error('Failed to retrieve file from IPFS:', error)
+    
+    if (error instanceof Error) {
+      throw new Error(`IPFS retrieval failed: ${error.message}`)
+    }
+    
+    throw new Error('IPFS retrieval failed: Unknown error')
+  }
+}
+
+/**
+ * Check if the web3.storage client is properly configured
+ */
+export async function checkWeb3StorageStatus(): Promise<{ configured: boolean; hasSpaces: boolean; currentSpace?: string }> {
+  try {
+    const client = await Client.create()
+    const accounts = client.accounts()
+    const spaces = client.spaces()
+    const currentSpace = client.currentSpace()
+    
+    return {
+      configured: Object.keys(accounts).length > 0,
+      hasSpaces: spaces.length > 0,
+      currentSpace: currentSpace?.did()
+    }
+  } catch (error) {
+    console.error('Failed to check web3.storage status:', error)
+    return {
+      configured: false,
+      hasSpaces: false
+    }
   }
 }
 
