@@ -4,6 +4,18 @@
  */
 
 import { ethers } from 'ethers';
+import { NetworkProviderManager } from './providers/NetworkProvider';
+import { SUPPORTED_NETWORKS, getNetworkById, type SupportedNetwork } from '../config/networks';
+
+// Lazy initialization of the network provider manager
+let networkManager: NetworkProviderManager | null = null;
+
+function getNetworkManager(): NetworkProviderManager {
+  if (!networkManager) {
+    networkManager = new NetworkProviderManager();
+  }
+  return networkManager;
+}
 
 // Contract ABI for GBVReportRegistry
 export const GBV_REPORT_REGISTRY_ABI = [
@@ -111,6 +123,7 @@ export const GBV_REPORT_REGISTRY_ABI = [
   }
 ];
 
+// Legacy interface for backward compatibility
 export interface NetworkConfig {
   chainId: number;
   name: string;
@@ -142,22 +155,23 @@ export interface TransactionDetails {
   timestamp?: string;
 }
 
-// Network configurations
+// Convert new network config to legacy format for backward compatibility
+function toLegacyNetworkConfig(network: SupportedNetwork): NetworkConfig {
+  return {
+    chainId: network.id,
+    name: network.displayName,
+    rpcUrl: network.rpcUrl,
+    blockExplorer: network.blockExplorerUrl,
+    contractAddress: network.contracts?.gbvRegistry || process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || ''
+  };
+}
+
+// Legacy networks mapping for backward compatibility
 export const NETWORKS: Record<string, NetworkConfig> = {
-  mumbai: {
-    chainId: 80001,
-    name: 'Polygon Mumbai',
-    rpcUrl: 'https://rpc-mumbai.maticvigil.com',
-    blockExplorer: 'https://mumbai.polygonscan.com',
-    contractAddress: process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || ''
-  },
-  polygon: {
-    chainId: 137,
-    name: 'Polygon Mainnet',
-    rpcUrl: 'https://polygon-rpc.com',
-    blockExplorer: 'https://polygonscan.com',
-    contractAddress: process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || ''
-  }
+  amoy: toLegacyNetworkConfig(SUPPORTED_NETWORKS.POLYGON_AMOY),
+  polygon: toLegacyNetworkConfig(SUPPORTED_NETWORKS.POLYGON_MAINNET),
+  blockdag_testnet: toLegacyNetworkConfig(SUPPORTED_NETWORKS.BLOCKDAG_TESTNET),
+  blockdag_mainnet: toLegacyNetworkConfig(SUPPORTED_NETWORKS.BLOCKDAG_MAINNET)
 };
 
 /**
@@ -169,11 +183,44 @@ export function getCurrentNetwork(): NetworkConfig {
 }
 
 /**
- * Get provider for the current network
+ * Get provider for the current network using NetworkProviderManager
  */
 export function getProvider(): ethers.JsonRpcProvider {
   const network = getCurrentNetwork();
-  return new ethers.JsonRpcProvider(network.rpcUrl);
+  const manager = getNetworkManager();
+  const provider = manager.getProvider(network.chainId);
+  
+  if (!provider) {
+    console.warn(`No provider available for chain ID: ${network.chainId}, falling back to direct provider`);
+    // Fallback to direct provider creation with explicit network configuration
+    return new ethers.JsonRpcProvider(network.rpcUrl, {
+      chainId: network.chainId,
+      name: network.name
+    });
+  }
+  
+  return provider;
+}
+
+/**
+ * Get provider for a specific chain ID using NetworkProviderManager
+ */
+export function getProviderForChain(chainId: number): ethers.JsonRpcProvider | null {
+  const manager = getNetworkManager();
+  return manager.getProvider(chainId);
+}
+
+/**
+ * Switch network using NetworkProviderManager
+ */
+export async function switchToNetwork(chainId: number): Promise<void> {
+  try {
+    const manager = getNetworkManager();
+    await manager.switchNetwork(chainId);
+  } catch (error) {
+    console.error(`Failed to switch to network ${chainId}:`, error);
+    throw error;
+  }
 }
 
 /**
@@ -273,18 +320,36 @@ export async function validateWalletConnection(provider: any): Promise<{ isValid
 }
 
 /**
- * Check network connectivity
+ * Check network connectivity using NetworkProviderManager
  */
 export async function checkNetworkConnectivity(provider: any): Promise<{ isConnected: boolean; error?: string }> {
   try {
-    // Try to get the current block number
+    // Try to get the current block number using browser provider
     const ethersProvider = new ethers.BrowserProvider(provider);
-    await ethersProvider.getBlockNumber();
+    const network = await ethersProvider.getNetwork();
+    const chainId = Number(network.chainId);
+    
+    // Use NetworkProviderManager for enhanced connectivity check
+    const manager = getNetworkManager();
+    const managedProvider = manager.getProvider(chainId);
+    if (managedProvider) {
+      // Test with managed provider for better error handling
+      await managedProvider.getBlockNumber();
+      console.log(`✅ Network connectivity confirmed for chain ${chainId}`);
+    } else {
+      // Fallback to browser provider
+      await ethersProvider.getBlockNumber();
+      console.log(`✅ Network connectivity confirmed (fallback) for chain ${chainId}`);
+    }
+    
     return { isConnected: true };
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('❌ Network connectivity check failed:', errorMessage);
+    
     return { 
       isConnected: false, 
-      error: `Network connectivity check failed: ${error instanceof Error ? error.message : 'Unknown error'}` 
+      error: `Network connectivity check failed: ${errorMessage}` 
     };
   }
 }
@@ -448,7 +513,7 @@ export async function connectWallet(): Promise<ethers.Signer> {
 }
 
 /**
- * Switch to the correct network
+ * Switch to the correct network with enhanced error handling
  */
 export async function switchNetwork(chainId: number): Promise<void> {
   if (typeof window === 'undefined' || !window.ethereum) {
@@ -456,25 +521,74 @@ export async function switchNetwork(chainId: number): Promise<void> {
   }
   
   try {
-    await window.ethereum.request({
-      method: 'wallet_switchEthereumChain',
-      params: [{ chainId: `0x${chainId.toString(16)}` }]
-    });
+    // Use NetworkProviderManager for enhanced switching
+    const manager = getNetworkManager();
+    await manager.switchNetwork(chainId);
+    console.log(`✅ Successfully switched to network ${chainId}`);
   } catch (error: any) {
-    // If the network doesn't exist, add it
-    if (error.code === 4902) {
-      const network = Object.values(NETWORKS).find(n => n.chainId === chainId);
-      if (network) {
-        await addNetwork(network);
+    console.error(`❌ Failed to switch to network ${chainId}:`, error);
+    
+    // Fallback to direct wallet switching
+    try {
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: `0x${chainId.toString(16)}` }]
+      });
+      console.log(`✅ Successfully switched to network ${chainId} (fallback)`);
+    } catch (fallbackError: any) {
+      // If the network doesn't exist, add it
+      if (fallbackError.code === 4902) {
+        const networkConfig = getNetworkById(chainId);
+        if (networkConfig) {
+          await addNetworkToWallet(networkConfig);
+          console.log(`✅ Added and switched to network ${chainId}`);
+        } else {
+          // Try legacy network config
+          const legacyNetwork = Object.values(NETWORKS).find(n => n.chainId === chainId);
+          if (legacyNetwork) {
+            await addNetwork(legacyNetwork);
+            console.log(`✅ Added and switched to network ${chainId} (legacy)`);
+          } else {
+            throw new Error(`Network ${chainId} not found in configuration`);
+          }
+        }
+      } else {
+        throw fallbackError;
       }
-    } else {
-      throw error;
     }
   }
 }
 
 /**
- * Add network to MetaMask
+ * Add network to MetaMask using new network configuration
+ */
+export async function addNetworkToWallet(network: SupportedNetwork): Promise<void> {
+  if (typeof window === 'undefined' || !window.ethereum) {
+    throw new Error('MetaMask not detected');
+  }
+  
+  const chainParams = {
+    chainId: `0x${network.id.toString(16)}`,
+    chainName: network.displayName,
+    rpcUrls: [network.rpcUrl],
+    blockExplorerUrls: [network.blockExplorerUrl],
+    nativeCurrency: {
+      name: network.nativeCurrency.name,
+      symbol: network.nativeCurrency.symbol,
+      decimals: network.nativeCurrency.decimals
+    }
+  };
+  
+  console.log(`Adding network to wallet:`, chainParams);
+  
+  await window.ethereum.request({
+    method: 'wallet_addEthereumChain',
+    params: [chainParams]
+  });
+}
+
+/**
+ * Add network to MetaMask (legacy function for backward compatibility)
  */
 export async function addNetwork(network: NetworkConfig): Promise<void> {
   if (typeof window === 'undefined' || !window.ethereum) {

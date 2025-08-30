@@ -42,7 +42,7 @@ export interface SecurityHookReturn {
 }
 
 export const useSecurity = (): SecurityHookReturn => {
-  const providerManager = getProviderManager();
+  const getProviderManagerLazy = useCallback(() => getProviderManager(), []);
   const [securityState, setSecurityState] = useState<SecurityState>({
     isValidating: false,
     validationResults: new Map(),
@@ -53,12 +53,14 @@ export const useSecurity = (): SecurityHookReturn => {
   const securityValidatorRef = useRef<SecurityValidator | null>(null);
   const validationHistoryRef = useRef<Array<SecurityValidationResult & { timestamp: Date; operationType: string }>>([]);
 
-  // Initialize security validator
-  useEffect(() => {
-    if (providerManager && !securityValidatorRef.current) {
+  // Initialize security validator lazily
+  const getSecurityValidator = useCallback(() => {
+    if (!securityValidatorRef.current) {
+      const providerManager = getProviderManagerLazy();
       securityValidatorRef.current = new SecurityValidator(providerManager);
     }
-  }, [providerManager]);
+    return securityValidatorRef.current;
+  }, [getProviderManagerLazy]);
 
   /**
    * Validate multi-network operation
@@ -68,14 +70,11 @@ export const useSecurity = (): SecurityHookReturn => {
     secondaryNetworkId: number,
     operation: 'deploy' | 'transfer' | 'verify' | 'cross-chain'
   ): Promise<SecurityValidationResult> => {
-    if (!securityValidatorRef.current) {
-      throw new Error('Security validator not initialized');
-    }
-
     setSecurityState(prev => ({ ...prev, isValidating: true, error: undefined }));
 
     try {
-      const result = await securityValidatorRef.current.validateMultiNetworkOperation(
+      const securityValidator = getSecurityValidator();
+      const result = await securityValidator.validateMultiNetworkOperation(
         primaryNetworkId,
         secondaryNetworkId,
         operation
@@ -107,7 +106,7 @@ export const useSecurity = (): SecurityHookReturn => {
       }));
       throw error;
     }
-  }, []);
+  }, [getSecurityValidator]);
 
   /**
    * Validate transaction
@@ -116,14 +115,11 @@ export const useSecurity = (): SecurityHookReturn => {
     transaction: TransactionSecurityCheck,
     networkId: number
   ): Promise<SecurityValidationResult> => {
-    if (!securityValidatorRef.current) {
-      throw new Error('Security validator not initialized');
-    }
-
     setSecurityState(prev => ({ ...prev, isValidating: true, error: undefined }));
 
     try {
-      const result = await securityValidatorRef.current.validateTransaction(transaction, networkId);
+      const securityValidator = getSecurityValidator();
+      const result = await securityValidator.validateTransaction(transaction, networkId);
       
       const validationKey = `tx_${transaction.to}_${networkId}_${Date.now()}`;
       
@@ -151,7 +147,7 @@ export const useSecurity = (): SecurityHookReturn => {
       }));
       throw error;
     }
-  }, []);
+  }, [getSecurityValidator]);
 
   /**
    * Validate contract security
@@ -160,14 +156,11 @@ export const useSecurity = (): SecurityHookReturn => {
     contractAddress: string,
     networkId: number
   ): Promise<ContractSecurityInfo> => {
-    if (!securityValidatorRef.current) {
-      throw new Error('Security validator not initialized');
-    }
-
     setSecurityState(prev => ({ ...prev, isValidating: true, error: undefined }));
 
     try {
-      const result = await securityValidatorRef.current.validateContractSecurity(
+      const securityValidator = getSecurityValidator();
+      const result = await securityValidator.validateContractSecurity(
         contractAddress,
         networkId
       );
@@ -191,20 +184,17 @@ export const useSecurity = (): SecurityHookReturn => {
       }));
       throw error;
     }
-  }, []);
+  }, [getSecurityValidator]);
 
   /**
    * Validate network security
    */
   const validateNetwork = useCallback(async (networkId: number): Promise<NetworkSecurityStatus> => {
-    if (!securityValidatorRef.current) {
-      throw new Error('Security validator not initialized');
-    }
-
     setSecurityState(prev => ({ ...prev, isValidating: true, error: undefined }));
 
     try {
-      const result = await securityValidatorRef.current.validateNetworkSecurity(networkId);
+      const securityValidator = getSecurityValidator();
+      const result = await securityValidator.validateNetworkSecurity(networkId);
       
       setSecurityState(prev => ({
         ...prev,
@@ -223,14 +213,17 @@ export const useSecurity = (): SecurityHookReturn => {
       }));
       throw error;
     }
-  }, []);
+  }, [getSecurityValidator]);
 
   /**
    * Clear validation cache
    */
   const clearValidationCache = useCallback(() => {
-    if (securityValidatorRef.current) {
-      securityValidatorRef.current.clearCache();
+    try {
+      const securityValidator = getSecurityValidator();
+      securityValidator.clearCache();
+    } catch (error) {
+      // Ignore errors if validator not initialized yet
     }
     
     setSecurityState(prev => ({
@@ -241,7 +234,7 @@ export const useSecurity = (): SecurityHookReturn => {
     }));
     
     validationHistoryRef.current = [];
-  }, []);
+  }, [getSecurityValidator]);
 
   /**
    * Get validation history

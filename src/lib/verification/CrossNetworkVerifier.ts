@@ -43,9 +43,16 @@ interface ContractAddresses {
 }
 
 class CrossNetworkVerifier {
-  private providerManager = getProviderManager();
+  private providerManager: any = null;
   private contractAddresses: ContractAddresses = {};
   private contractABI: any[] = [];
+
+  private getProviderManager() {
+    if (!this.providerManager) {
+      this.providerManager = getProviderManager();
+    }
+    return this.providerManager;
+  }
 
   constructor(contractAddresses: ContractAddresses, contractABI: any[]) {
     this.contractAddresses = contractAddresses;
@@ -146,7 +153,7 @@ class CrossNetworkVerifier {
     };
 
     try {
-      const provider = this.providerManager.getProvider(networkId);
+      const provider = this.getProviderManager().getProvider(networkId);
       if (!provider) {
         throw new Error(`Provider not available for network ${networkId}`);
       }
@@ -193,7 +200,7 @@ class CrossNetworkVerifier {
    */
   private async getReportFromNetwork(reportId: string, networkId: number): Promise<ReportData | null> {
     try {
-      const provider = this.providerManager.getProvider(networkId);
+      const provider = this.getProviderManager().getProvider(networkId);
       if (!provider) return null;
 
       const contractAddress = this.contractAddresses[networkId];

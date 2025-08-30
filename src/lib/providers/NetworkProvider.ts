@@ -6,6 +6,14 @@ export interface ProviderConfig {
   retryDelay: number;
   timeout: number;
   maxConcurrentRequests: number;
+  healthCheckInterval: number;
+  blockdagConfig?: {
+    timeout: number;
+    retryAttempts: number;
+    retryDelay: number;
+    healthCheckInterval: number;
+    maxConcurrentRequests: number;
+  };
 }
 
 export interface NetworkHealth {
@@ -35,10 +43,19 @@ class NetworkProviderManager {
       retryDelay: 1000,
       timeout: 30000,
       maxConcurrentRequests: 10,
+      healthCheckInterval: 30000,
+      blockdagConfig: {
+        timeout: 30000, // Increased for DAG consensus
+        retryAttempts: 5,
+        retryDelay: 2000,
+        healthCheckInterval: 60000,
+        maxConcurrentRequests: 20 // Higher for parallel processing
+      },
       ...config,
     };
 
-    this.initializeProviders();
+    // Delay provider initialization to avoid startup errors
+    // Providers will be created on-demand when first requested
     this.startHealthChecking();
   }
 
@@ -51,19 +68,45 @@ class NetworkProviderManager {
   }
 
   private createProviderPool(network: SupportedNetwork): void {
-    const primaryProvider = new ethers.JsonRpcProvider(network.rpcUrl, {
+    const isBlockDAG = network.type === 'blockdag';
+    const config = isBlockDAG ? this.config.blockdagConfig : this.config;
+    
+    // Use environment variables for RPC URLs with fallbacks
+    let rpcUrl = network.rpcUrl;
+    if (isBlockDAG) {
+      if (network.id === 1043) { // BlockDAG Testnet
+        rpcUrl = process.env.NEXT_PUBLIC_BLOCKDAG_TESTNET_RPC_URL || process.env.BLOCKDAG_TESTNET_RPC_URL || network.rpcUrl;
+      } else if (network.id === 1044) { // BlockDAG Mainnet
+        rpcUrl = process.env.NEXT_PUBLIC_BLOCKDAG_MAINNET_RPC_URL || process.env.BLOCKDAG_MAINNET_RPC_URL || network.rpcUrl;
+      }
+    }
+
+    const primaryProvider = new ethers.JsonRpcProvider(rpcUrl, {
       chainId: network.id,
       name: network.name,
     });
 
-    // Configure provider timeouts
-    primaryProvider.pollingInterval = network.type === 'blockdag' ? 1000 : 4000;
-
+    // Configure provider timeouts and polling intervals
+    primaryProvider.pollingInterval = isBlockDAG ? 1000 : 4000; // Faster polling for BlockDAG
+    
     const fallbackProviders: ethers.JsonRpcProvider[] = [];
     
-    // Add fallback providers for critical networks
-    if (network.id === 1043) { // BlockDAG Testnet
-      // Add additional RPC endpoints when available
+    // Add fallback providers for BlockDAG networks
+    if (isBlockDAG && network.id === 1043) {
+      // Add fallback RPC endpoints when available
+      const fallbackUrls = [
+        'https://rpc.primordial.bdagscan.com',
+        // Add more fallback URLs as they become available
+      ].filter(url => url !== rpcUrl);
+      
+      fallbackUrls.forEach(url => {
+        const fallbackProvider = new ethers.JsonRpcProvider(url, {
+          chainId: network.id,
+          name: `${network.name}-fallback`,
+        });
+        fallbackProvider.pollingInterval = 1000;
+        fallbackProviders.push(fallbackProvider);
+      });
     }
 
     const health: NetworkHealth = {
@@ -85,16 +128,30 @@ class NetworkProviderManager {
   }
 
   public getProvider(chainId: number): ethers.JsonRpcProvider | null {
-    const pool = this.providers.get(chainId);
+    let pool = this.providers.get(chainId);
     if (!pool) {
-      console.warn(`No provider available for chain ID: ${chainId}`);
-      return null;
+      // Lazy initialization: create provider pool on first request
+      const network = Object.values(SUPPORTED_NETWORKS).find(n => n.id === chainId && n.enabled);
+      if (network) {
+        this.createProviderPool(network);
+        pool = this.providers.get(chainId);
+      }
+      
+      if (!pool) {
+        console.warn(`No provider available for chain ID: ${chainId}`);
+        return null;
+      }
     }
+
+    const isBlockDAG = this.isBlockDAGNetwork(chainId);
+    const maxRequests = isBlockDAG 
+      ? (this.config.blockdagConfig?.maxConcurrentRequests || 20)
+      : this.config.maxConcurrentRequests;
 
     // Check if we're exceeding concurrent request limits
     const currentRequests = this.requestCounts.get(chainId) || 0;
-    if (currentRequests >= this.config.maxConcurrentRequests) {
-      console.warn(`Max concurrent requests reached for chain ${chainId}`);
+    if (currentRequests >= maxRequests) {
+      console.warn(`Max concurrent requests reached for chain ${chainId} (${currentRequests}/${maxRequests})`);
       return null;
     }
 
@@ -125,16 +182,22 @@ class NetworkProviderManager {
       throw new Error(`No provider available for chain ${chainId}`);
     }
 
+    const isBlockDAG = this.isBlockDAGNetwork(chainId);
+    const config = isBlockDAG ? this.config.blockdagConfig : this.config;
+    const maxRetries = isBlockDAG ? (config?.retryAttempts || 5) : this.config.maxRetries;
+    const timeout = isBlockDAG ? (config?.timeout || 30000) : this.config.timeout;
+    const retryDelay = isBlockDAG ? (config?.retryDelay || 2000) : this.config.retryDelay;
+
     this.incrementRequestCount(chainId);
 
     let lastError: Error | null = null;
     
-    for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         const result = await Promise.race([
           operation(provider),
           new Promise<never>((_, reject) => 
-            setTimeout(() => reject(new Error('Request timeout')), this.config.timeout)
+            setTimeout(() => reject(new Error('Request timeout')), timeout)
           )
         ]);
         
@@ -144,7 +207,7 @@ class NetworkProviderManager {
       } catch (error: any) {
         lastError = error as Error;
         
-        // Enhanced error categorization
+        // Enhanced error categorization for BlockDAG
         const isNetworkError = error?.message?.includes('Failed to fetch') ||
                               error?.message?.includes('fetch') ||
                               error?.code === 'NETWORK_ERROR' ||
@@ -154,21 +217,35 @@ class NetworkProviderManager {
         const isTimeoutError = error?.message?.includes('timeout') ||
                               error?.code === 'TIMEOUT';
         
+        const isDAGConsensusError = isBlockDAG && (
+          error?.message?.includes('consensus') ||
+          error?.message?.includes('DAG') ||
+          error?.message?.includes('block confirmation')
+        );
+        
         this.updateHealth(chainId, false, error as Error);
         
         // Log detailed error information
-        console.warn(`Attempt ${attempt + 1}/${this.config.maxRetries + 1} failed for chain ${chainId}:`, {
+        console.warn(`Attempt ${attempt + 1}/${maxRetries + 1} failed for chain ${chainId}:`, {
           message: error?.message,
           code: error?.code,
           isNetworkError,
-          isTimeoutError
+          isTimeoutError,
+          isDAGConsensusError,
+          isBlockDAG
         });
         
-        if (attempt < this.config.maxRetries) {
-          // Use exponential backoff with jitter for network errors
-          const baseDelay = this.config.retryDelay * Math.pow(2, attempt);
+        if (attempt < maxRetries) {
+          // Use exponential backoff with jitter, enhanced for BlockDAG
+          let baseDelay = retryDelay * Math.pow(2, attempt);
           const jitter = Math.random() * 1000; // Add up to 1 second jitter
-          const delay = isNetworkError ? baseDelay + jitter : baseDelay;
+          
+          // Special handling for BlockDAG consensus errors
+          if (isBlockDAG && isDAGConsensusError) {
+            baseDelay = Math.min(baseDelay * 1.5, 10000); // Cap at 10 seconds for consensus issues
+          }
+          
+          const delay = isNetworkError || isDAGConsensusError ? baseDelay + jitter : baseDelay;
           
           await this.delay(delay);
         }
@@ -209,10 +286,26 @@ class NetworkProviderManager {
     }
   }
 
-  private async startHealthChecking(): Promise<void> {
-    this.healthCheckInterval = setInterval(async () => {
-      await this.performHealthChecks();
-    }, 30000); // Check every 30 seconds
+  public startHealthChecking(): void {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+    }
+
+    // Perform initial health check
+    this.performHealthChecks();
+
+    // Determine health check interval based on network types
+    const hasBlockDAG = Array.from(this.providers.keys()).some(chainId => this.isBlockDAGNetwork(chainId));
+    const interval = hasBlockDAG 
+      ? (this.config.blockdagConfig?.healthCheckInterval || 45000) // 45 seconds for BlockDAG
+      : 30000; // 30 seconds for standard networks
+
+    // Set up periodic health checks
+    this.healthCheckInterval = setInterval(() => {
+      this.performHealthChecks();
+    }, interval);
+
+    console.debug(`Health checking started with ${interval}ms interval (BlockDAG optimized: ${hasBlockDAG})`);
   }
 
   private async performHealthChecks(): Promise<void> {
@@ -220,12 +313,16 @@ class NetworkProviderManager {
       async ([chainId, pool]) => {
         try {
           const startTime = Date.now();
+          const isBlockDAG = this.isBlockDAGNetwork(chainId);
+          const timeout = isBlockDAG 
+            ? (this.config.blockdagConfig?.timeout || 30000)
+            : 10000;
           
-          // Use a shorter timeout for health checks
+          // Use appropriate timeout for health checks based on network type
           const blockNumber = await Promise.race([
             pool.primary.getBlockNumber(),
             new Promise<never>((_, reject) => 
-              setTimeout(() => reject(new Error('Health check timeout')), 10000)
+              setTimeout(() => reject(new Error('Health check timeout')), timeout)
             )
           ]);
           
@@ -235,11 +332,14 @@ class NetworkProviderManager {
           pool.health.blockNumber = blockNumber;
           pool.health.lastChecked = Date.now();
           
-          // Consider healthy if latency is reasonable
-          if (latency < 5000) {
+          // Consider healthy if latency is reasonable (higher threshold for BlockDAG)
+          const latencyThreshold = isBlockDAG ? 10000 : 5000;
+          if (latency < latencyThreshold) {
             pool.health.isHealthy = true;
             pool.health.errorCount = Math.max(0, pool.health.errorCount - 1);
           }
+          
+          console.debug(`Health check passed for chain ${chainId} (${isBlockDAG ? 'BlockDAG' : 'Standard'}), latency: ${latency}ms`);
         } catch (error: any) {
           pool.health.errorCount += 1;
           pool.health.isHealthy = pool.health.errorCount < 5;
@@ -381,6 +481,11 @@ class NetworkProviderManager {
 
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private isBlockDAGNetwork(chainId: number): boolean {
+    // BlockDAG Testnet: 19188, BlockDAG Mainnet: 19189 (placeholder)
+    return chainId === 19188 || chainId === 19189;
   }
 
   public destroy(): void {

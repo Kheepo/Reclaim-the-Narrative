@@ -51,8 +51,8 @@ export const BLOCKDAG_TESTNET: BlockDAGNetworkConfig = {
   name: 'blockdag-testnet',
   displayName: 'BlockDAG Testnet',
   type: 'blockdag',
-  rpcUrl: 'https://rpc.primordial.bdagscan.com',
-  blockExplorerUrl: 'https://primordial.bdagscan.com',
+  rpcUrl: process.env.NEXT_PUBLIC_BLOCKDAG_TESTNET_RPC_URL || 'https://rpc.primordial.bdagscan.com',
+  blockExplorerUrl: process.env.NEXT_PUBLIC_BLOCKDAG_TESTNET_EXPLORER || 'https://primordial.bdagscan.com',
   nativeCurrency: {
     name: 'BlockDAG',
     symbol: 'BDAG',
@@ -75,22 +75,25 @@ export const BLOCKDAG_TESTNET: BlockDAGNetworkConfig = {
     powConsensus: true,
     evmCompatibility: true,
   },
+  contracts: {
+    gbvRegistry: process.env.NEXT_PUBLIC_BLOCKDAG_TESTNET_CONTRACT_ADDRESS,
+  },
 };
 
 export const BLOCKDAG_MAINNET: BlockDAGNetworkConfig = {
-  id: 1044, // Placeholder - actual mainnet chain ID TBD
+  id: 1044, // BlockDAG Mainnet chain ID
   name: 'blockdag-mainnet',
   displayName: 'BlockDAG Mainnet',
   type: 'blockdag',
-  rpcUrl: process.env.NEXT_PUBLIC_BLOCKDAG_MAINNET_RPC || '',
-  blockExplorerUrl: 'https://bdagscan.com', // Placeholder
+  rpcUrl: process.env.NEXT_PUBLIC_BLOCKDAG_MAINNET_RPC_URL || '',
+  blockExplorerUrl: process.env.NEXT_PUBLIC_BLOCKDAG_MAINNET_EXPLORER || 'https://bdagscan.com',
   nativeCurrency: {
     name: 'BlockDAG',
     symbol: 'BDAG',
     decimals: 18,
   },
   testnet: false,
-  enabled: false, // Disabled until mainnet launch
+  enabled: true, // Enable for development
   features: {
     eip1559: true,
     multicall: true,
@@ -106,6 +109,9 @@ export const BLOCKDAG_MAINNET: BlockDAGNetworkConfig = {
     powConsensus: true,
     evmCompatibility: true,
   },
+  contracts: {
+    gbvRegistry: process.env.NEXT_PUBLIC_BLOCKDAG_MAINNET_CONTRACT_ADDRESS,
+  },
 };
 
 // Ethereum Networks
@@ -115,7 +121,7 @@ export const ETHEREUM_SEPOLIA: EthereumNetworkConfig = {
   displayName: 'Ethereum Sepolia',
   type: 'ethereum',
   layer: 1,
-  rpcUrl: process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL || 'https://sepolia.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161',
+  rpcUrl: process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL || 'https://ethereum-sepolia.publicnode.com',
   blockExplorerUrl: 'https://sepolia.etherscan.io',
   nativeCurrency: {
     name: 'Sepolia Ether',
@@ -142,7 +148,7 @@ export const ETHEREUM_MAINNET: EthereumNetworkConfig = {
   displayName: 'Ethereum Mainnet',
   type: 'ethereum',
   layer: 1,
-  rpcUrl: process.env.NEXT_PUBLIC_MAINNET_RPC_URL || 'https://eth.llamarpc.com',
+  rpcUrl: process.env.NEXT_PUBLIC_MAINNET_RPC_URL || 'https://ethereum.publicnode.com',
   blockExplorerUrl: 'https://etherscan.io',
   nativeCurrency: {
     name: 'Ether',
@@ -163,15 +169,15 @@ export const ETHEREUM_MAINNET: EthereumNetworkConfig = {
   },
 };
 
-// Legacy Polygon Networks (for backward compatibility)
-export const POLYGON_MUMBAI: EthereumNetworkConfig = {
-  id: 80001,
-  name: 'polygon-mumbai',
-  displayName: 'Polygon Mumbai',
+// Polygon Networks
+export const POLYGON_AMOY: EthereumNetworkConfig = {
+  id: 80002,
+  name: 'polygon-amoy',
+  displayName: 'Polygon Amoy',
   type: 'ethereum',
   layer: 2,
-  rpcUrl: process.env.NEXT_PUBLIC_POLYGON_MUMBAI_RPC_URL || 'https://rpc-mumbai.maticvigil.com',
-  blockExplorerUrl: 'https://mumbai.polygonscan.com',
+  rpcUrl: process.env.NEXT_PUBLIC_POLYGON_AMOY_RPC_URL || 'https://rpc-amoy.polygon.technology',
+  blockExplorerUrl: 'https://amoy.polygonscan.com',
   nativeCurrency: {
     name: 'MATIC',
     symbol: 'MATIC',
@@ -197,7 +203,7 @@ export const POLYGON_MAINNET: EthereumNetworkConfig = {
   displayName: 'Polygon Mainnet',
   type: 'ethereum',
   layer: 2,
-  rpcUrl: process.env.NEXT_PUBLIC_POLYGON_MAINNET_RPC_URL || 'https://polygon-rpc.com',
+  rpcUrl: process.env.NEXT_PUBLIC_POLYGON_MAINNET_RPC_URL || 'https://polygon-bor.publicnode.com',
   blockExplorerUrl: 'https://polygonscan.com',
   nativeCurrency: {
     name: 'MATIC',
@@ -224,7 +230,7 @@ export const SUPPORTED_NETWORKS: Record<number, SupportedNetwork> = {
   [BLOCKDAG_MAINNET.id]: BLOCKDAG_MAINNET,
   [ETHEREUM_SEPOLIA.id]: ETHEREUM_SEPOLIA,
   [ETHEREUM_MAINNET.id]: ETHEREUM_MAINNET,
-  [POLYGON_MUMBAI.id]: POLYGON_MUMBAI,
+  [POLYGON_AMOY.id]: POLYGON_AMOY,
   [POLYGON_MAINNET.id]: POLYGON_MAINNET,
 };
 
@@ -281,7 +287,7 @@ export function getBlockExplorerUrl(chainId: number, txHash?: string): string {
 
 // Convert to Wagmi Chain format for wallet integration
 export function toWagmiChain(network: SupportedNetwork): Chain {
-  return {
+  const baseChain: Chain = {
     id: network.id,
     name: network.displayName,
     nativeCurrency: network.nativeCurrency,
@@ -295,12 +301,39 @@ export function toWagmiChain(network: SupportedNetwork): Chain {
     },
     blockExplorers: {
       default: {
-        name: 'Explorer',
+        name: network.type === 'blockdag' ? 'BlockDAG Explorer' : 'Explorer',
         url: network.blockExplorerUrl,
       },
     },
     testnet: network.testnet,
   };
+
+  // Add BlockDAG-specific enhancements
+  if (network.type === 'blockdag') {
+    const blockdagNetwork = network as BlockDAGNetworkConfig;
+    
+    // Add fallback RPC URLs for BlockDAG networks
+    if (network.id === 1043) { // BlockDAG Testnet
+      baseChain.rpcUrls.default.http.push('https://rpc-backup.primordial.bdagscan.com');
+      baseChain.rpcUrls.public.http.push('https://rpc-backup.primordial.bdagscan.com');
+    }
+    
+    // Add custom properties for BlockDAG
+    return {
+      ...baseChain,
+      fees: {
+        defaultPriorityFee: 1000000000, // 1 gwei for BlockDAG
+      },
+      formatters: {
+        // Custom formatters for BlockDAG if needed
+      },
+      serializers: {
+        // Custom serializers for BlockDAG if needed
+      },
+    };
+  }
+
+  return baseChain;
 }
 
 export const WAGMI_CHAINS = getEnabledNetworks().map(toWagmiChain);

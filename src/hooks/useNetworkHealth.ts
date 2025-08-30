@@ -40,7 +40,7 @@ export interface NetworkHealthHookReturn {
 }
 
 export const useNetworkHealth = (): NetworkHealthHookReturn => {
-  const providerManager = getProviderManager();
+  const getProviderManagerLazy = useCallback(() => getProviderManager(), []);
   const [healthState, setHealthState] = useState<NetworkHealthState>({
     metrics: [],
     isMonitoring: false,
@@ -59,15 +59,22 @@ export const useNetworkHealth = (): NetworkHealthHookReturn => {
   const healthMonitorRef = useRef<ReturnType<typeof getHealthMonitor> | null>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
+  // Initialize health monitor lazily
+  const getHealthMonitorLazy = useCallback(() => {
+    if (!healthMonitorRef.current) {
+      const providerManager = getProviderManagerLazy();
+      healthMonitorRef.current = getHealthMonitor(providerManager);
+    }
+    return healthMonitorRef.current;
+  }, [getProviderManagerLazy]);
+
   // Initialize health monitor
   useEffect(() => {
-    if (!providerManager) return;
-
     try {
-      healthMonitorRef.current = getHealthMonitor(providerManager);
+      const monitor = getHealthMonitorLazy();
       
       // Subscribe to health updates
-      const unsubscribe = healthMonitorRef.current.subscribe((metrics) => {
+      const unsubscribe = monitor.subscribe((metrics) => {
         setHealthState(prev => ({
           ...prev,
           metrics,
@@ -81,7 +88,7 @@ export const useNetworkHealth = (): NetworkHealthHookReturn => {
       // Update monitoring status
       setHealthState(prev => ({
         ...prev,
-        isMonitoring: healthMonitorRef.current?.getMonitoringStatus() || false,
+        isMonitoring: monitor.getMonitoringStatus() || false,
       }));
       
     } catch (error) {
@@ -98,22 +105,15 @@ export const useNetworkHealth = (): NetworkHealthHookReturn => {
         unsubscribeRef.current = null;
       }
     };
-  }, [providerManager]);
+  }, [getHealthMonitorLazy]);
 
   // Start monitoring
   const startMonitoring = useCallback(async (interval: number = 30000) => {
-    if (!healthMonitorRef.current) {
-      setHealthState(prev => ({
-        ...prev,
-        error: 'Health monitor not initialized',
-      }));
-      return;
-    }
-
     setHealthState(prev => ({ ...prev, isLoading: true, error: null }));
 
     try {
-      await healthMonitorRef.current.startMonitoring(interval);
+      const monitor = getHealthMonitorLazy();
+      await monitor.startMonitoring(interval);
       setHealthState(prev => ({
         ...prev,
         isMonitoring: true,
@@ -127,14 +127,13 @@ export const useNetworkHealth = (): NetworkHealthHookReturn => {
         error: error instanceof Error ? error.message : 'Failed to start monitoring',
       }));
     }
-  }, []);
+  }, [getHealthMonitorLazy]);
 
   // Stop monitoring
   const stopMonitoring = useCallback(() => {
-    if (!healthMonitorRef.current) return;
-
     try {
-      healthMonitorRef.current.stopMonitoring();
+      const monitor = getHealthMonitorLazy();
+      monitor.stopMonitoring();
       setHealthState(prev => ({
         ...prev,
         isMonitoring: false,
@@ -146,22 +145,15 @@ export const useNetworkHealth = (): NetworkHealthHookReturn => {
         error: error instanceof Error ? error.message : 'Failed to stop monitoring',
       }));
     }
-  }, []);
+  }, [getHealthMonitorLazy]);
 
   // Force health check
   const forceHealthCheck = useCallback(async (networkId?: number) => {
-    if (!healthMonitorRef.current) {
-      setHealthState(prev => ({
-        ...prev,
-        error: 'Health monitor not initialized',
-      }));
-      return;
-    }
-
     setHealthState(prev => ({ ...prev, isLoading: true, error: null }));
 
     try {
-      await healthMonitorRef.current.forceHealthCheck(networkId);
+      const monitor = getHealthMonitorLazy();
+      await monitor.forceHealthCheck(networkId);
       setHealthState(prev => ({
         ...prev,
         isLoading: false,
@@ -174,15 +166,14 @@ export const useNetworkHealth = (): NetworkHealthHookReturn => {
         error: error instanceof Error ? error.message : 'Failed to perform health check',
       }));
     }
-  }, []);
+  }, [getHealthMonitorLazy]);
 
   // Update alert configuration
   const updateAlertConfig = useCallback((config: Partial<AlertConfig>) => {
-    if (!healthMonitorRef.current) return;
-
     try {
-      healthMonitorRef.current.updateAlertConfig(config);
-      const updatedConfig = healthMonitorRef.current.getAlertConfig();
+      const monitor = getHealthMonitorLazy();
+      monitor.updateAlertConfig(config);
+      const updatedConfig = monitor.getAlertConfig();
       setAlertConfig(updatedConfig);
     } catch (error) {
       console.error('Failed to update alert config:', error);
@@ -191,56 +182,83 @@ export const useNetworkHealth = (): NetworkHealthHookReturn => {
         error: error instanceof Error ? error.message : 'Failed to update alert config',
       }));
     }
-  }, []);
+  }, [getHealthMonitorLazy]);
 
   // Get network health
   const getNetworkHealth = useCallback((networkId: number): NetworkHealthMetrics | undefined => {
-    if (!healthMonitorRef.current) return undefined;
-    return healthMonitorRef.current.getNetworkHealth(networkId);
-  }, []);
+    try {
+      const monitor = getHealthMonitorLazy();
+      return monitor.getNetworkHealth(networkId);
+    } catch {
+      return undefined;
+    }
+  }, [getHealthMonitorLazy]);
 
   // Get healthy networks
   const getHealthyNetworks = useCallback((): NetworkHealthMetrics[] => {
-    if (!healthMonitorRef.current) return [];
-    return healthMonitorRef.current.getHealthyNetworks();
-  }, []);
+    try {
+      const monitor = getHealthMonitorLazy();
+      return monitor.getHealthyNetworks();
+    } catch {
+      return [];
+    }
+  }, [getHealthMonitorLazy]);
 
   // Get unhealthy networks
   const getUnhealthyNetworks = useCallback((): NetworkHealthMetrics[] => {
-    if (!healthMonitorRef.current) return [];
-    return healthMonitorRef.current.getUnhealthyNetworks();
-  }, []);
+    try {
+      const monitor = getHealthMonitorLazy();
+      return monitor.getUnhealthyNetworks();
+    } catch {
+      return [];
+    }
+  }, [getHealthMonitorLazy]);
 
   // Get performance history
   const getPerformanceHistory = useCallback((
     networkId: number, 
     hours: number = 1
   ): NetworkPerformanceData[] => {
-    if (!healthMonitorRef.current) return [];
-    return healthMonitorRef.current.getPerformanceHistory(networkId, hours);
-  }, []);
+    try {
+      const monitor = getHealthMonitorLazy();
+      return monitor.getPerformanceHistory(networkId, hours);
+    } catch {
+      return [];
+    }
+  }, [getHealthMonitorLazy]);
 
   // Get average latency
   const getAverageLatency = useCallback((
     networkId: number, 
     hours: number = 1
   ): number => {
-    if (!healthMonitorRef.current) return 0;
-    return healthMonitorRef.current.getAverageLatency(networkId, hours);
-  }, []);
+    try {
+      const monitor = getHealthMonitorLazy();
+      return monitor.getAverageLatency(networkId, hours);
+    } catch {
+      return 0;
+    }
+  }, [getHealthMonitorLazy]);
 
   // Get network uptime
   const getNetworkUptime = useCallback((
     networkId: number, 
     hours: number = 24
   ): number => {
-    if (!healthMonitorRef.current) return 0;
-    return healthMonitorRef.current.getNetworkUptime(networkId, hours);
-  }, []);
+    try {
+      const monitor = getHealthMonitorLazy();
+      return monitor.getNetworkUptime(networkId, hours);
+    } catch {
+      return 0;
+    }
+  }, [getHealthMonitorLazy]);
 
   // Get network summary
   const getNetworkSummary = useCallback(() => {
-    if (!healthMonitorRef.current) {
+    try {
+      const monitor = getHealthMonitorLazy();
+      return monitor.getNetworkSummary();
+    } catch {
       return {
         total: 0,
         healthy: 0,
@@ -249,8 +267,7 @@ export const useNetworkHealth = (): NetworkHealthHookReturn => {
         averageUptime: 0,
       };
     }
-    return healthMonitorRef.current.getNetworkSummary();
-  }, []);
+  }, [getHealthMonitorLazy]);
 
   return {
     healthState,

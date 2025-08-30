@@ -62,7 +62,10 @@ export function useWallet(): UseWalletReturn {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  const providerManager = getProviderManager();
+  // Lazy initialization of provider manager
+  const getProviderManagerLazy = useCallback(() => {
+    return getProviderManager();
+  }, []);
   
   // Memoized values
   const currentNetwork = useMemo(() => {
@@ -145,6 +148,7 @@ export function useWallet(): UseWalletReturn {
       }
       
       // Validate network connectivity first
+      const providerManager = getProviderManagerLazy();
       const connectivityCheck = await providerManager.validateNetworkConnectivity(targetChainId);
       if (!connectivityCheck.isValid) {
         console.warn(`Network connectivity issue for ${targetNetwork.displayName}: ${connectivityCheck.error}`);
@@ -191,7 +195,7 @@ export function useWallet(): UseWalletReturn {
     } finally {
       setIsLoading(false);
     }
-  }, [switchChain, providerManager]);
+  }, [switchChain, getProviderManagerLazy]);
   
   // Add network to wallet
   const addNetwork = useCallback(async (network: SupportedNetwork): Promise<boolean> => {
@@ -228,8 +232,9 @@ export function useWallet(): UseWalletReturn {
   // Get provider for current network
   const getProvider = useCallback((): ethers.JsonRpcProvider | null => {
     if (!chainId) return null;
+    const providerManager = getProviderManagerLazy();
     return providerManager.getProvider(chainId);
-  }, [chainId, providerManager]);
+  }, [chainId, getProviderManagerLazy]);
   
   // Get signer
   const getSigner = useCallback(async (): Promise<ethers.JsonRpcSigner | null> => {
@@ -260,6 +265,7 @@ export function useWallet(): UseWalletReturn {
         return;
       }
       
+      const providerManager = getProviderManagerLazy();
       const balanceWei = await providerManager.executeWithRetry(
         chainId,
         async (p) => await p.getBalance(address)
@@ -271,7 +277,7 @@ export function useWallet(): UseWalletReturn {
       console.error('Failed to fetch balance:', err);
       setBalance(null);
     }
-  }, [address, chainId, getProvider, providerManager]);
+  }, [address, chainId, getProvider, getProviderManagerLazy]);
   
   // Check if network is supported
   const isNetworkSupported = useCallback((targetChainId: number): boolean => {
@@ -314,12 +320,13 @@ export function useWallet(): UseWalletReturn {
 // Additional utility hooks
 export function useNetworkHealth(chainId?: number) {
   const [health, setHealth] = useState<{ isHealthy: boolean } | null>(null);
-  const providerManager = getProviderManager();
+  const getProviderManagerLazy = useCallback(() => getProviderManager(), []);
   
   useEffect(() => {
     if (!chainId) return;
     
     const updateHealth = () => {
+      const providerManager = getProviderManagerLazy();
       const networkHealth = providerManager.getNetworkHealth(chainId);
       setHealth(networkHealth);
     };
@@ -328,19 +335,20 @@ export function useNetworkHealth(chainId?: number) {
     const interval = setInterval(updateHealth, 10000); // Update every 10 seconds
     
     return () => clearInterval(interval);
-  }, [chainId, providerManager]);
+  }, [chainId, getProviderManagerLazy]);
   
   return health;
 }
 
 export function useNetworkPerformance(chainId?: number) {
   const [metrics, setMetrics] = useState<{ currentLatency: number; tps: number; finality: string } | null>(null);
-  const providerManager = getProviderManager();
+  const getProviderManagerLazy = useCallback(() => getProviderManager(), []);
   
   useEffect(() => {
     if (!chainId) return;
     
     const updateMetrics = () => {
+      const providerManager = getProviderManagerLazy();
       const performanceMetrics = providerManager.getNetworkPerformanceMetrics(chainId);
       setMetrics(performanceMetrics);
     };
@@ -349,7 +357,7 @@ export function useNetworkPerformance(chainId?: number) {
     const interval = setInterval(updateMetrics, 15000); // Update every 15 seconds
     
     return () => clearInterval(interval);
-  }, [chainId, providerManager]);
+  }, [chainId, getProviderManagerLazy]);
   
   return metrics;
 }
