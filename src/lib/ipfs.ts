@@ -465,7 +465,10 @@ export async function checkWeb3StorageStatus(): Promise<{ configured: boolean; h
     const client = await Client.create()
     
     // Check if we have an account (user is logged in)
-    const account = client.account()
+    const accounts = client.accounts()
+    const accountKeys = Object.keys(accounts) as Array<keyof typeof accounts>
+    const account = accountKeys.length > 0 ? accounts[accountKeys[0]] : null
+    
     console.log('Account status:', account ? 'Found' : 'Not found')
     
     if (!account) {
