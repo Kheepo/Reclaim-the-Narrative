@@ -1,0 +1,49 @@
+import { dirname } from "path";
+import { fileURLToPath } from "url";
+import { FlatCompat } from "@eslint/eslintrc";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const compat = new FlatCompat({
+  baseDirectory: __dirname,
+});
+
+const eslintConfig = [
+  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  {
+    ignores: [
+      "node_modules/**",
+      ".next/**",
+      "out/**",
+      "build/**",
+      "next-env.d.ts",
+      "src/test/**/*.js",
+      "**/__mocks__/**/*.js",
+    ],
+  },
+  {
+    rules: {
+      "@typescript-eslint/no-explicit-any": "warn",
+      "@typescript-eslint/no-unused-vars": "warn",
+      "@typescript-eslint/no-namespace": "warn",
+    },
+  },
+  {
+    files: ["**/__tests__/**/*", "**/*.test.*", "**/__mocks__/**/*", "**/test/**/*"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-unused-vars": "off",
+      "@typescript-eslint/no-namespace": "off",
+    },
+  },
+  {
+    files: ["**/*.js"],
+    languageOptions: {
+      ecmaVersion: 2020,
+      sourceType: "module",
+    },
+  },
+];
+
+export default eslintConfig;
