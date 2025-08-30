@@ -81,6 +81,32 @@ export const setupWeb3Storage = async (email: string, spaceName: string = 'GBV-R
     const account = await client.login(email as `${string}@${string}`)
     console.log('Please check your email and click the verification link.')
     
+    // Note: We don't create spaces here immediately because the email verification
+    // needs to be completed first. The space creation will happen after email verification
+    // is confirmed through the checkWeb3StorageStatus function.
+    
+    return
+  } catch (error) {
+    console.error('Failed to setup Web3.Storage:', error)
+    throw error
+  }
+}
+
+// Create space after email verification is completed
+export const createWeb3StorageSpace = async (spaceName: string = 'GBV-Reporting-Platform'): Promise<void> => {
+  try {
+    const client = await Client.create()
+    const accounts = client.accounts()
+    
+    // Check if user is logged in
+    if (Object.keys(accounts).length === 0) {
+      throw new Error('No authenticated account found. Please complete email verification first.')
+    }
+    
+    // Get the first account (should be the one we just verified)
+    const accountEmail = Object.keys(accounts)[0]
+    const account = accounts[accountEmail]
+    
     // Create a space for uploads
     const space = await client.createSpace(spaceName)
     
@@ -95,7 +121,7 @@ export const setupWeb3Storage = async (email: string, spaceName: string = 'GBV-R
     
     return
   } catch (error) {
-    console.error('Failed to setup Web3.Storage:', error)
+    console.error('Failed to create Web3.Storage space:', error)
     throw error
   }
 }
