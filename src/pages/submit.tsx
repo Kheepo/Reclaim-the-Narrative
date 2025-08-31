@@ -632,7 +632,8 @@ export default function SubmitPage() {
 
         // Check sufficient balance for gas using wagmi
         const balance = await signer.provider?.getBalance(address);
-        if (!balance || balance.lt(ethers.utils.parseEther('0.001'))) {
+        const minBalance = ethers.parseEther('0.001');
+        if (!balance || balance < minBalance) {
           error('Insufficient balance for transaction fees. Please add funds to your wallet.');
           return false;
         }
