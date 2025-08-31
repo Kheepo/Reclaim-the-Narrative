@@ -3,7 +3,7 @@
  * Tests switching between supported networks and error handling
  */
 
-const { JSDOM } = require('jsdom');
+import { JSDOM } from 'jsdom';
 
 // Mock browser environment
 const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
@@ -77,7 +77,7 @@ class MockEthereum {
     
     // Simulate network switching
     if (chainId === '0x89' || chainId === '0x13881') {
-      const oldChainId = this.currentChainId;
+      const _oldChainId = this.currentChainId;
       this.currentChainId = chainId;
       
       // Emit chainChanged event
@@ -213,8 +213,8 @@ async function testNetworkSwitching() {
     console.log('\nTest 5: Chain Change Event Listeners');
     let eventReceived = false;
     
-    const chainChangeHandler = (chainId) => {
-      console.log(`✓ Chain change event received: ${chainId}`);
+    const chainChangeHandler = (_chainId) => {
+      console.log(`✓ Chain change event received: ${_chainId}`);
       eventReceived = true;
     };
     
@@ -258,7 +258,7 @@ async function testNetworkValidation() {
     // Test supported networks
     console.log('Test 1: Supported Network Validation');
     for (const networkId of supportedNetworks) {
-      const chainId = '0x' + networkId.toString(16);
+      const _chainId = '0x' + networkId.toString(16);
       const isSupported = supportedNetworks.includes(networkId);
       const networkName = networkId === 137 ? 'Polygon Mainnet' : 'Polygon Mumbai';
       
@@ -301,11 +301,11 @@ async function runAllTests() {
 }
 
 // Check if running directly
-if (require.main === module) {
+if (import.meta.url === `file://${process.argv[1]}`) {
   runAllTests().catch(console.error);
 }
 
-module.exports = {
+export {
   testNetworkSwitching,
   testNetworkValidation,
   runAllTests

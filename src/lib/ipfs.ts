@@ -14,10 +14,83 @@ export interface IPFSUploadResult {
   name?: string;
 }
 
+export interface IPFSUploadOptions {
+  onProgress?: (progress: UploadProgress) => void;
+  timeout?: number;
+  retryAttempts?: number;
+  verifyUpload?: boolean;
+  chunkSize?: number;
+  enableCompression?: boolean;
+  metadata?: Record<string, any>;
+}
+
+export interface UploadProgress {
+  stage: 'preparing' | 'uploading' | 'verifying' | 'complete';
+  progress: number;
+  bytesUploaded: number;
+  totalBytes: number;
+  currentFile: string;
 export interface FileUpload {
   file: File;
   name: string;
   type: string;
+}
+
+/**
+ * Calculate file hash for verification
+ */
+export async function calculateFileHash(file: File | Blob): Promise<string> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (error) {
+    throw new Error(`Failed to calculate file hash: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+/**
+ * Compress file if beneficial
+ */
+export async function compressFile(file: File): Promise<File> {
+  // Only compress if file is larger than 1MB and is compressible
+  if (file.size < 1024 * 1024) {
+    return file;
+  }
+  
+  const compressibleTypes = [
+    'text/',
+    'application/json',
+    'application/javascript',
+    'application/xml',
+    'image/svg+xml'
+  ];
+  
+  const isCompressible = compressibleTypes.some(type => file.type.startsWith(type));
+  if (!isCompressible) {
+    return file;
+  }
+  
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const compressed = await new Response(
+      new Response(arrayBuffer).body?.pipeThrough(new CompressionStream('gzip'))
+    ).arrayBuffer();
+    
+    // Only use compressed version if it's significantly smaller
+    if (compressed.byteLength < file.size * 0.8) {
+      return new File([compressed], `${file.name}.gz`, {
+        type: 'application/gzip',
+        lastModified: file.lastModified
+      });
+    }
+    
+    return file;
+  } catch (error) {
+    console.warn('File compression failed, using original:', error);
+    return file;
+  }
 }
 
 // Initialize Web3.Storage client

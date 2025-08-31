@@ -3,7 +3,7 @@
  * This tests the wallet connection without requiring external RPC endpoints
  */
 
-const { JSDOM } = require('jsdom');
+import { JSDOM } from 'jsdom';
 
 // Mock browser environment
 const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
@@ -35,10 +35,10 @@ const mockEthereum = {
         throw new Error(`Unsupported method: ${params.method}`);
     }
   },
-  on: (event, handler) => {
+  on: (event, _handler) => {
     console.log(`Mock MetaMask event listener added: ${event}`);
   },
-  removeListener: (event, handler) => {
+  removeListener: (event, _handler) => {
     console.log(`Mock MetaMask event listener removed: ${event}`);
   }
 };
@@ -80,11 +80,11 @@ async function testWalletConnection() {
     
     // Test 5: Event listener setup
     console.log('\nTest 5: Event Listeners');
-    window.ethereum.on('accountsChanged', (accounts) => {
-      console.log('Account changed:', accounts);
+    window.ethereum.on('accountsChanged', (_accounts) => {
+      console.log('Account changed:', _accounts);
     });
-    window.ethereum.on('chainChanged', (chainId) => {
-      console.log('Chain changed:', chainId);
+    window.ethereum.on('chainChanged', (_chainId) => {
+      console.log('Chain changed:', _chainId);
     });
     console.log('✓ Event listeners registered');
     
@@ -125,7 +125,7 @@ async function testErrorHandling() {
     // Test network error
     console.log('\nTest 2: Network Error Simulation');
     const mockNetworkErrorEthereum = {
-      request: async (params) => {
+      request: async (_params) => {
         throw new Error('Network request failed');
       }
     };
@@ -163,11 +163,11 @@ async function runAllTests() {
 }
 
 // Check if running directly
-if (require.main === module) {
+if (import.meta.url === `file://${process.argv[1]}`) {
   runAllTests().catch(console.error);
 }
 
-module.exports = {
+export {
   testWalletConnection,
   testErrorHandling,
   runAllTests

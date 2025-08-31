@@ -26,7 +26,7 @@ describe("GBVReportRegistry", function () {
 
   describe("Deployment", function () {
     it("Should deploy successfully", async function () {
-      expect(await gbvReportRegistry.getAddress()).to.be.properAddress;
+      expect(await gbvReportRegistry.getAddress()).to.be.a.properAddress();
     });
   });
 

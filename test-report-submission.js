@@ -3,8 +3,8 @@
  * Tests form validation, file handling, encryption, and blockchain interaction
  */
 
-const { JSDOM } = require('jsdom');
-const crypto = require('crypto');
+import { JSDOM } from 'jsdom';
+import crypto from 'crypto';
 
 // Mock browser environment
 const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
@@ -433,11 +433,8 @@ async function generateFilePreview(file) {
   });
 }
 
-async function encryptData(data, password) {
+async function encryptData(data, _password) {
   try {
-    const encoder = new TextEncoder();
-    const dataBuffer = encoder.encode(JSON.stringify(data));
-    
     // Mock encryption - in real implementation, use proper crypto
     const encrypted = Buffer.from(JSON.stringify(data)).toString('base64');
     return encrypted;
@@ -483,11 +480,11 @@ async function runAllTests() {
 }
 
 // Check if running directly
-if (require.main === module) {
+if (import.meta.url === `file://${process.argv[1]}`) {
   runAllTests().catch(console.error);
 }
 
-module.exports = {
+export {
   testFormValidation,
   testFileHandling,
   testEncryption,

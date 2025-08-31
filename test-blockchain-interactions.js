@@ -1,5 +1,5 @@
 // Test Blockchain Interactions
-const { JSDOM } = require('jsdom');
+import { JSDOM } from 'jsdom';
 
 // Mock Jest functions first
 const jest = {
@@ -57,7 +57,7 @@ const mockEthereum = {
 global.window.ethereum = mockEthereum;
 
 // Mock ethers.js
-const mockEthers = {
+const _mockEthers = {
   JsonRpcProvider: jest.fn().mockImplementation(() => ({
     getBlockNumber: jest.fn().mockResolvedValue(12345),
     getTransaction: jest.fn(),
@@ -85,10 +85,10 @@ const mockEthers = {
 // Test data
 const validAddress = '0x1234567890123456789012345678901234567890';
 const validTxHash = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
-const reportHash = 'test-report-hash-123';
+const _reportHash = 'test-report-hash-123';
 const ipfsCIDs = ['QmTestHash1', 'QmTestHash2'];
 
-const mockTransactionResult = {
+const _mockTransactionResult = {
   hash: validTxHash,
   blockNumber: 12345,
   gasUsed: '21000',
@@ -190,7 +190,7 @@ function testContractInteractions() {
   console.log('Testing contract interactions...');
   
   // Mock contract instance
-  const mockContract = {
+  const _mockContract = {
     submitReport: jest.fn().mockResolvedValue({
       hash: validTxHash,
       wait: jest.fn().mockResolvedValue({
@@ -249,7 +249,7 @@ function testTransactionHandling() {
   console.log('Testing transaction handling...');
   
   // Mock provider for transaction operations
-  const mockProvider = {
+  const _mockProvider = {
     getTransaction: jest.fn().mockResolvedValue({
       hash: validTxHash,
       from: validAddress,

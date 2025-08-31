@@ -1,5 +1,5 @@
 // Test Report Verification Functionality
-const { JSDOM } = require('jsdom');
+import { JSDOM } from 'jsdom';
 
 // Mock Jest functions first
 const jest = {
@@ -68,7 +68,7 @@ global.crypto = cryptoMock;
 
 // Mock TextDecoder
 global.TextDecoder = class {
-  decode(buffer) {
+  decode(_buffer) {
     return 'decrypted report data';
   }
 };

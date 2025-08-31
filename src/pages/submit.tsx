@@ -81,7 +81,7 @@ import {
   compressFile,
   IPFSUploadOptions,
   IPFSUploadResult
-} from '../lib/enhanced-ipfs';
+} from '../lib/ipfs';
 import { 
   SubmissionManager, 
   SessionManager, 
