@@ -997,8 +997,14 @@ export async function setupWeb3StorageAuth(email: string): Promise<void> {
 
 /**
  * Check if web3.storage is properly configured
+ * Now uses Storacha Network's email-based authentication
  */
-export function isWeb3StorageConfigured(): boolean {
-  const token = process.env.NEXT_PUBLIC_WEB3_STORAGE_TOKEN;
-  return !!token && token !== 'your_web3_storage_token_here';
+export async function isWeb3StorageConfigured(): Promise<boolean> {
+  try {
+    const status = await checkWeb3StorageStatus();
+    return status.configured && status.hasSpaces;
+  } catch (error) {
+    console.error('[IPFS Config Check] Failed to check configuration:', error);
+    return false;
+  }
 }
