@@ -363,8 +363,8 @@ export default function SubmitPage() {
     const { name, value } = e.target;
     
     try {
-      // Sanitize input
-      const sanitizedValue = InputSanitizer.sanitizeText(value);
+      // Sanitize input while preserving spaces
+      const sanitizedValue = InputSanitizer.sanitizeText(value, { trim: false });
       
       // Real-time validation
       if (realTimeValidation) {
@@ -668,8 +668,16 @@ export default function SubmitPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    console.log('=== SUBMISSION STARTED ===');
+    console.log('Form data:', formData);
+    console.log('Files:', files.map(f => ({ name: f.file.name, size: f.file.size, type: f.file.type })));
+    console.log('Encryption password provided:', !!encryptionPassword);
+    console.log('Web3.Storage status:', web3StorageStatus);
+    console.log('Wallet connected:', isConnected, 'Address:', address);
+    
     // Prevent double submissions
     if (submissionManager.current?.getState().isSubmitting) {
+      console.error('SUBMISSION ERROR: Already in progress');
       error('Submission already in progress. Please wait.');
       return;
     }
@@ -681,8 +689,13 @@ export default function SubmitPage() {
     }
 
     // Validate form before proceeding
+    console.log('=== FORM VALIDATION ===');
     const isValid = await validateForm();
-    if (!isValid) return;
+    console.log('Form validation result:', isValid);
+    if (!isValid) {
+      console.error('SUBMISSION ERROR: Form validation failed');
+      return;
+    }
     
     // Start submission process
     submissionManager.current?.startSubmission();
@@ -1448,7 +1461,15 @@ export default function SubmitPage() {
       }, 2000);
       
     } catch (err) {
-      console.error('Failed to submit report:', err);
+      console.error('=== SUBMISSION FAILED ===');
+      console.error('Error details:', err);
+      console.error('Error type:', typeof err);
+      console.error('Error constructor:', err?.constructor?.name);
+      console.error('Error message:', err instanceof Error ? err.message : String(err));
+      console.error('Error stack:', err instanceof Error ? err.stack : 'No stack trace');
+      console.error('Current operation:', currentOperation);
+      console.error('Upload progress:', uploadProgress);
+      console.error('Submit status:', submitStatus);
       
       // Circuit breaker automatically records failure when execute() throws
       
@@ -1666,6 +1687,68 @@ export default function SubmitPage() {
               </div>
             </div>
           </div>
+        </FadeIn>
+
+        {/* Web3.Storage Status Indicator */}
+        <FadeIn delay={300}>
+          {(!web3StorageStatus?.configured || !web3StorageStatus?.hasSpaces) ? (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 mb-8 shadow-sm">
+              <div className="flex items-start space-x-4">
+                <div className="p-2 bg-amber-100 rounded-lg">
+                  <svg className="h-6 w-6 text-amber-600" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold text-amber-900 mb-2">IPFS Storage Setup Required</h3>
+                  <p className="text-amber-800 leading-relaxed mb-4">
+                    Before you can submit your report, you need to configure IPFS storage. This ensures your report data is stored securely and permanently on a decentralized network.
+                  </p>
+                  <div className="bg-amber-100 rounded-lg p-4">
+                    <h4 className="font-semibold text-amber-900 mb-2">Setup Steps:</h4>
+                    <ol className="list-decimal list-inside space-y-1 text-sm text-amber-800">
+                      <li>Navigate to Step 3 (Security Settings)</li>
+                      <li>Enter your email address for Web3.Storage verification</li>
+                      <li>Check your email and click the verification link</li>
+                      <li>Create a storage space for your reports</li>
+                      <li>Return here to complete your submission</li>
+                    </ol>
+                  </div>
+                  {currentStep !== 3 && (
+                    <button
+                      type="button"
+                      onClick={() => goToStep(3)}
+                      className="mt-4 inline-flex items-center px-4 py-2 bg-amber-600 text-white text-sm font-medium rounded-lg hover:bg-amber-700 transition-colors duration-200"
+                    >
+                      Go to Security Settings
+                      <ChevronRightIcon className="h-4 w-4 ml-2" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-green-50 border border-green-200 rounded-xl p-6 mb-8 shadow-sm">
+              <div className="flex items-start space-x-4">
+                <div className="p-2 bg-green-100 rounded-lg">
+                  <svg className="h-6 w-6 text-green-600" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-green-900 mb-2">IPFS Storage Ready</h3>
+                  <p className="text-green-800 leading-relaxed">
+                    Your IPFS storage is configured and ready. You can now submit your report securely to the decentralized network.
+                  </p>
+                  {web3StorageStatus.currentSpace && (
+                    <p className="text-sm text-green-700 mt-2">
+                      Active storage space: <span className="font-medium">{web3StorageStatus.currentSpace}</span>
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </FadeIn>
 
         {/* Wizard Content */}

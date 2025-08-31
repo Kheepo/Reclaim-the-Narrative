@@ -256,8 +256,8 @@ export class SecureFileUploadHandler {
   constructor(
     private defaultConfig: FileValidationConfig = {
       maxSize: 10 * 1024 * 1024, // 10MB
-      allowedTypes: ['image/jpeg', 'image/png', 'image/gif', 'application/pdf', 'text/plain'],
-      allowedExtensions: ['.jpg', '.jpeg', '.png', '.gif', '.pdf', '.txt'],
+      allowedTypes: ['image/jpeg', 'image/png', 'image/gif', 'application/pdf', 'text/plain', 'video/mp4', 'video/quicktime', 'video/x-msvideo'],
+      allowedExtensions: ['.jpg', '.jpeg', '.png', '.gif', '.pdf', '.txt', '.mp4', '.mov', '.avi'],
       maxFiles: 5,
       requireEncryption: true,
       scanForMalware: false

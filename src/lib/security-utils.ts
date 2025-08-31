@@ -34,6 +34,7 @@ export interface InputSanitizationOptions {
   allowedAttributes?: Record<string, string[]>;
   maxLength?: number;
   stripScripts?: boolean;
+  trim?: boolean;
 }
 
 // Rate limiting storage
@@ -352,7 +353,8 @@ export class InputSanitizer {
       sanitized = this.sanitizeHtml(sanitized, options);
     }
 
-    return sanitized.trim();
+    // Only trim if explicitly requested in options, otherwise preserve spaces
+    return options.trim !== false ? sanitized.trim() : sanitized;
   }
 
   /**
