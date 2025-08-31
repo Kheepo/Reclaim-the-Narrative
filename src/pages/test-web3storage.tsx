@@ -31,8 +31,8 @@ const TestWeb3Storage: React.FC = () => {
         addLog('Setup completed successfully');
       } else {
         setStatus('setup-failed');
-        addLog(`Setup failed: ${result.error}`);
-        setError(result.error || 'Setup failed');
+        addLog(`Setup failed: ${result.message}`);
+        setError(result.message || 'Setup failed');
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
@@ -50,12 +50,12 @@ const TestWeb3Storage: React.FC = () => {
       const result = await checkWeb3StorageStatus();
       addLog(`Status check result: ${JSON.stringify(result)}`);
       
-      if (result.success) {
+      if (result.configured) {
         setStatus('configured');
         addLog('Web3.Storage is properly configured');
       } else {
         setStatus('not-configured');
-        addLog(`Status check failed: ${result.error}`);
+        addLog(`Status check failed: ${result.error || 'Not configured'}`);
         setError(result.error || 'Status check failed');
       }
     } catch (err) {

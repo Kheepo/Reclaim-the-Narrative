@@ -34,8 +34,9 @@ const TestWeb3StorageSetup: React.FC = () => {
         networkLogs.push({ url, status: response.status, ok: response.ok, timestamp: new Date().toISOString() });
         return response;
       } catch (error) {
-        console.error('[Test] Network Error:', { url, error: error.message });
-        networkLogs.push({ url, error: error.message, timestamp: new Date().toISOString() });
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error('[Test] Network Error:', { url, error: errorMessage });
+        networkLogs.push({ url, error: errorMessage, timestamp: new Date().toISOString() });
         throw error;
       }
     };

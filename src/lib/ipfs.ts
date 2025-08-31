@@ -5,6 +5,7 @@
 
 import * as Client from '@storacha/client'
 import type { UnknownLink } from 'multiformats'
+import { CID } from 'multiformats/cid'
 
 export interface IPFSUploadResult {
   cid: string;
@@ -682,17 +683,18 @@ export async function retrieveDataFromIPFS(cid: string): Promise<Uint8Array> {
     const client = await initializeWeb3Storage()
     console.log('[IPFS Retrieve] Client initialized, getting upload info...')
     
-    const res = await client.capability.upload.get({ root: cid })
+    const parsedCid = CID.parse(cid)
+    const uploadItem = await client.capability.upload.get(parsedCid)
     
-    if (!res.ok) {
-      console.error('[IPFS Retrieve] Failed to get upload info:', res.error?.message)
-      throw new Error(`Failed to retrieve from IPFS: ${res.error?.message || 'Unknown error'}`)
+    if (!uploadItem) {
+      console.error('[IPFS Retrieve] Failed to get upload info: Upload not found')
+      throw new Error('Failed to retrieve from IPFS: Upload not found')
     }
     
     console.log('[IPFS Retrieve] Upload info retrieved successfully')
     
     // Get the first file from the upload
-    const files = res.ok.shards || []
+    const files = uploadItem.shards || []
     if (files.length === 0) {
       console.error('[IPFS Retrieve] No files found in upload')
       throw new Error('No files found in IPFS upload')
