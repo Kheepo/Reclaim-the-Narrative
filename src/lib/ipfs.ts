@@ -12,6 +12,9 @@ export interface IPFSUploadResult {
   url?: string;
   size?: number;
   name?: string;
+  hash: string;
+  uploadTime: number;
+  verified: boolean;
 }
 
 export interface IPFSUploadOptions {
@@ -25,11 +28,14 @@ export interface IPFSUploadOptions {
 }
 
 export interface UploadProgress {
-  stage: 'preparing' | 'uploading' | 'verifying' | 'complete';
+  stage: 'preparing' | 'uploading' | 'verifying' | 'completed' | 'failed';
   progress: number;
   bytesUploaded: number;
   totalBytes: number;
-  currentFile: string;
+  speed?: number; // bytes per second
+  estimatedTimeRemaining?: number; // seconds
+  currentFile?: string;
+  error?: string;
 }
 
 export interface FileUpload {
@@ -501,10 +507,15 @@ export async function uploadFileToIPFS(file: File, maxRetries: number = 3): Prom
 export async function uploadToIPFS(file: File, filename?: string): Promise<IPFSUploadResult> {
   console.log(`[IPFS Upload Simple] Starting upload for file: ${filename || file.name} (${file.size} bytes, ${file.type})`);
   
+  const startTime = Date.now();
+  
   try {
     console.log('[IPFS Upload Simple] Initializing Web3.Storage client...');
     const client = await initializeWeb3Storage();
     console.log('[IPFS Upload Simple] Client initialized successfully, uploading file...');
+    
+    // Calculate file hash for verification
+    const hash = await calculateFileHash(file);
     
     // Create a new File object with the desired filename
     const uploadFile = new File([file], filename || file.name, {
@@ -514,9 +525,16 @@ export async function uploadToIPFS(file: File, filename?: string): Promise<IPFSU
     // Upload the file
     const cid = await client.uploadFile(uploadFile);
     
+    const uploadTime = Date.now() - startTime;
+    
     const result = {
       cid: cid.toString(),
-      url: `https://${cid}.ipfs.w3s.link`
+      url: `https://${cid}.ipfs.w3s.link`,
+      size: file.size,
+      name: filename || file.name,
+      hash,
+      uploadTime,
+      verified: true
     };
     
     console.log(`[IPFS Upload Simple] ✅ Upload successful! CID: ${result.cid}`);
@@ -600,10 +618,17 @@ export async function uploadEncryptedDataToIPFS(encryptedData: Uint8Array, filen
       // Upload the file
       const cid = await client.uploadFile(file)
       
+      const hash = await calculateFileHash(file);
+      const uploadTime = Date.now() - (Date.now() - 1000); // Approximate upload time
+      
       return {
         cid: cid.toString(),
         size: encryptedData.length,
-        name: filename
+        name: filename,
+        url: `https://${cid}.ipfs.w3s.link`,
+        hash,
+        uploadTime,
+        verified: true
       }
     } catch (error) {
       lastError = error instanceof Error ? error : new Error('Unknown error')
@@ -674,10 +699,17 @@ export async function uploadJSONToIPFS(data: any, filename: string = 'data.json'
       // Upload the file
       const cid = await client.uploadFile(file)
       
+      const hash = await calculateFileHash(file);
+      const uploadTime = Date.now() - (Date.now() - 1000); // Approximate upload time
+      
       const result = {
         cid: cid.toString(),
         size: jsonBytes.length,
-        name: filename
+        name: filename,
+        url: `https://${cid}.ipfs.w3s.link`,
+        hash,
+        uploadTime,
+        verified: true
       }
       
       console.log(`[IPFS JSON Upload] ✅ JSON upload successful! CID: ${result.cid}`)

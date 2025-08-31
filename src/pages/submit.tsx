@@ -76,12 +76,12 @@ import {
   estimateGas
 } from '../lib/wallet-utils';
 import { 
-  uploadToIPFS, 
   calculateFileHash,
   compressFile,
   IPFSUploadOptions,
   IPFSUploadResult
 } from '../lib/ipfs';
+import { uploadToIPFS } from '../lib/enhanced-ipfs';
 import { 
   SubmissionManager, 
   SessionManager, 
