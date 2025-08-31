@@ -157,12 +157,45 @@ export interface TransactionDetails {
 
 // Convert new network config to legacy format for backward compatibility
 function toLegacyNetworkConfig(network: SupportedNetwork): NetworkConfig {
+  // Get contract address with proper fallback chain
+  let contractAddress = '';
+  
+  // First try network-specific contract address
+  if (network.contracts?.gbvRegistry) {
+    contractAddress = network.contracts.gbvRegistry;
+  } else {
+    // Fallback to network-specific environment variables
+    switch (network.id) {
+      case 11155111: // Ethereum Sepolia
+        contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_SEPOLIA || '';
+        break;
+      case 1: // Ethereum Mainnet
+        contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_MAINNET || '';
+        break;
+      case 80002: // Polygon Amoy (formerly Mumbai)
+        contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_MUMBAI || '';
+        break;
+      case 137: // Polygon Mainnet
+        contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_POLYGON || '';
+        break;
+      case 1043: // BlockDAG Testnet
+        contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_BLOCKDAG_TESTNET || '';
+        break;
+      case 1044: // BlockDAG Mainnet
+        contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_BLOCKDAG_MAINNET || '';
+        break;
+      default:
+        // Final fallback to generic contract address
+        contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || '';
+    }
+  }
+  
   return {
     chainId: network.id,
     name: network.displayName,
     rpcUrl: network.rpcUrl,
     blockExplorer: network.blockExplorerUrl,
-    contractAddress: network.contracts?.gbvRegistry || process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || ''
+    contractAddress
   };
 }
 

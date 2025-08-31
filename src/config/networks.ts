@@ -140,6 +140,9 @@ export const ETHEREUM_SEPOLIA: EthereumNetworkConfig = {
     tps: 15,
     finality: 'standard',
   },
+  contracts: {
+    gbvRegistry: process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_SEPOLIA,
+  },
 };
 
 export const ETHEREUM_MAINNET: EthereumNetworkConfig = {
@@ -166,6 +169,9 @@ export const ETHEREUM_MAINNET: EthereumNetworkConfig = {
     avgBlockTime: 12,
     tps: 15,
     finality: 'standard',
+  },
+  contracts: {
+    gbvRegistry: process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_MAINNET,
   },
 };
 
@@ -195,6 +201,9 @@ export const POLYGON_AMOY: EthereumNetworkConfig = {
     tps: 65,
     finality: 'fast',
   },
+  contracts: {
+    gbvRegistry: process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_MUMBAI,
+  },
 };
 
 export const POLYGON_MAINNET: EthereumNetworkConfig = {
@@ -221,6 +230,9 @@ export const POLYGON_MAINNET: EthereumNetworkConfig = {
     avgBlockTime: 2,
     tps: 65,
     finality: 'fast',
+  },
+  contracts: {
+    gbvRegistry: process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_POLYGON,
   },
 };
 
