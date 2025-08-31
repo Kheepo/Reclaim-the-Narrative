@@ -560,7 +560,7 @@ export default function SubmitPage() {
       }
 
       // Validate CSRF token
-      if (!csrfProtection.current?.validateToken('submit-session', csrfToken)) {
+      if (!csrfProtection.current?.validateToken('default-session', csrfToken)) {
         error('Security validation failed. Please refresh the page.');
         return false;
       }
