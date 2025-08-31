@@ -1,5 +1,5 @@
 // Debug script to test form submission step by step
-const { validateFormData } = require('./src/lib/validation');
+const { validateFormData } = require('./src/lib/validation.ts');
 
 // Test minimal valid form data
 function testMinimalFormData() {

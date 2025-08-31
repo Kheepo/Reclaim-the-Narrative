@@ -30,6 +30,8 @@ export interface UploadProgress {
   bytesUploaded: number;
   totalBytes: number;
   currentFile: string;
+}
+
 export interface FileUpload {
   file: File;
   name: string;
