@@ -1,6 +1,6 @@
 import { createConfig, http, fallback } from 'wagmi';
-import { mainnet, sepolia, polygon, polygonMumbai } from 'wagmi/chains';
-import { injected, metaMask, walletConnect } from 'wagmi/connectors';
+import { mainnet, sepolia, polygon, polygonMumbai } from 'viem/chains';
+import { injected, metaMask, walletConnect } from '@wagmi/connectors';
 import { SUPPORTED_NETWORKS, toWagmiChain, isBlockDAGNetwork } from './networks';
 
 // Convert our supported networks to wagmi chains

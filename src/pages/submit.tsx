@@ -120,10 +120,12 @@ export default function SubmitPage() {
   const checkWeb3StorageStatusAsync = async () => {
     setIsCheckingWeb3Storage(true);
     try {
+      console.debug('[Submit] Checking Web3.Storage status async');
       const status = await checkWeb3StorageStatus();
+      console.debug('[Submit] Web3.Storage status result:', status);
       setWeb3StorageStatus(status);
     } catch (error) {
-      console.error('Failed to check web3.storage status:', error);
+      console.error('[Submit] Error checking Web3.Storage status:', error);
       setWeb3StorageStatus({ configured: false, hasSpaces: false });
     } finally {
       setIsCheckingWeb3Storage(false);
@@ -131,24 +133,45 @@ export default function SubmitPage() {
   };
 
   // Handle web3.storage setup completion
-  const handleWeb3StorageSetupComplete = () => {
-    checkWeb3StorageStatusAsync();
+  const handleWeb3StorageSetupComplete = async () => {
+    console.debug('[Submit] Web3.Storage setup completed callback triggered');
+    try {
+      // Re-check the status to ensure it's properly updated
+      const status = await checkWeb3StorageStatus()
+      console.debug('[Submit] Status after setup completion:', status);
+      setWeb3StorageStatus(status)
+      
+      // If setup is complete, show success message but don't redirect
+      if (status.configured && status.hasSpaces) {
+        console.debug('[Submit] Web3.Storage is fully configured - staying on current step');
+        // User can manually proceed when ready
+      }
+    } catch (error) {
+      console.error('[Submit] Error in setup completion callback:', error)
+    }
   };
 
   // Wizard navigation functions
   const nextStep = () => {
+    console.debug('[Submit] nextStep called, current step:', currentStep);
     if (currentStep < totalSteps) {
+      console.debug('[Submit] Moving to step:', currentStep + 1);
       setCurrentStep(currentStep + 1);
+    } else {
+      console.debug('[Submit] Already at last step:', currentStep);
     }
   };
   
   const prevStep = () => {
     if (currentStep > 1) {
-      setCurrentStep(currentStep - 1);
+      const newStep = currentStep - 1;
+      console.debug('[Submit] prevStep called, moving from step', currentStep, 'to step', newStep);
+      setCurrentStep(newStep);
     }
   };
   
   const goToStep = (step: number) => {
+    console.debug('[Submit] goToStep called, moving from step', currentStep, 'to step', step);
     setCurrentStep(step);
   };
   
