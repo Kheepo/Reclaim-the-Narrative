@@ -287,18 +287,47 @@ async function uploadWithProgress(
 ): Promise<IPFSUploadResult> {
   const { onProgress, timeout, metadata } = options;
   
-  // Try Web3.Storage first (if API key is available)
-  const web3StorageKey = process.env.REACT_APP_WEB3_STORAGE_KEY;
-  if (web3StorageKey) {
-    try {
-      return await uploadToWeb3Storage(file, originalHash, web3StorageKey, {
-        onProgress,
-        timeout,
-        metadata
+  // Try Web3.Storage first (using new Storacha Network authentication)
+  try {
+    // Import the main IPFS functions that handle proper authentication
+    const { uploadToIPFS: mainUploadToIPFS, isWeb3StorageConfigured } = await import('./ipfs');
+    
+    // Check if Web3.Storage is properly configured
+    const isConfigured = await isWeb3StorageConfigured();
+    if (isConfigured) {
+      console.log('[Enhanced IPFS] Using Web3.Storage via main IPFS module');
+      
+      // Use the main uploadToIPFS function which handles proper authentication
+      const result = await mainUploadToIPFS(file);
+      
+      // Report progress
+      onProgress?.({
+        stage: 'uploading',
+        progress: 50,
+        bytesUploaded: file.size / 2,
+        totalBytes: file.size,
+        currentFile: file.name
       });
-    } catch (error) {
-      console.warn('Web3.Storage upload failed, trying alternatives:', error);
+      
+      onProgress?.({
+        stage: 'completed',
+        progress: 100,
+        bytesUploaded: file.size,
+        totalBytes: file.size,
+        currentFile: file.name
+      });
+      
+      return {
+         cid: result.cid,
+         size: file.size,
+         url: result.url || `https://w3s.link/ipfs/${result.cid}`,
+         hash: originalHash,
+         uploadTime: result.uploadTime || 0,
+         verified: result.verified || false
+       };
     }
+  } catch (error) {
+    console.warn('Web3.Storage upload failed, trying alternatives:', error);
   }
   
   // Try Pinata as fallback
