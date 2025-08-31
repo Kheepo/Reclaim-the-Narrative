@@ -24,6 +24,8 @@ export interface ConnectivityCheckResult {
   services: Record<string, boolean>;
   networkStatus: NetworkStatus;
   timestamp: Date;
+  connectedCount?: number;
+  criticalConnectedCount?: number;
 }
 
 // Default service endpoints to check
@@ -110,6 +112,21 @@ export async function checkConnectivity(
   const endpoints = customEndpoints || DEFAULT_ENDPOINTS;
   const networkStatus = getNetworkStatus();
   
+  // If browser reports offline, don't bother checking endpoints
+  if (!networkStatus.isOnline) {
+    const services: Record<string, boolean> = {};
+    endpoints.forEach(endpoint => {
+      services[endpoint.name] = false;
+    });
+    
+    return {
+      isConnected: false,
+      services,
+      networkStatus,
+      timestamp: new Date()
+    };
+  }
+  
   const serviceChecks = await Promise.allSettled(
     endpoints.map(async (endpoint) => ({
       name: endpoint.name,
@@ -119,12 +136,17 @@ export async function checkConnectivity(
   
   const services: Record<string, boolean> = {};
   let connectedCount = 0;
+  let criticalConnectedCount = 0;
   
   serviceChecks.forEach((result, index) => {
+    const endpoint = endpoints[index];
     if (result.status === 'fulfilled') {
       services[result.value.name] = result.value.connected;
       if (result.value.connected) {
         connectedCount++;
+        if (endpoint.critical) {
+          criticalConnectedCount++;
+        }
       }
     } else {
       services[endpoints[index].name] = false;
@@ -132,14 +154,18 @@ export async function checkConnectivity(
   });
   
   // Consider connected if we can reach at least one critical service
+  // OR if we can reach at least 2 services (even if non-critical)
   const criticalServices = endpoints.filter(e => e.critical);
-  const criticalConnected = criticalServices.some(service => services[service.name]);
+  const hasCriticalConnection = criticalConnectedCount > 0;
+  const hasMinimumConnections = connectedCount >= 2;
   
   return {
-    isConnected: networkStatus.isOnline && (criticalConnected || connectedCount > 0),
+    isConnected: networkStatus.isOnline && (hasCriticalConnection || hasMinimumConnections),
     services,
     networkStatus,
-    timestamp: new Date()
+    timestamp: new Date(),
+    connectedCount,
+    criticalConnectedCount
   };
 }
 

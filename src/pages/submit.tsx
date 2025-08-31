@@ -714,7 +714,7 @@ export default function SubmitPage() {
           }
         );
       } else if (successfulChecks < 2) {
-        info('Limited network connectivity detected. Proceeding with caution.');
+        info(`Network connectivity check: ${successfulChecks} of ${connectivityResults.length} services reachable. Upload may take longer than usual.`);
       }
 
       // Prepare report data with enhanced validation
@@ -1313,16 +1313,61 @@ export default function SubmitPage() {
       
       // Circuit breaker automatically records failure when execute() throws
       
-      const enhancedError = err instanceof Error && 'category' in err 
-        ? err as EnhancedError
-        : createEnhancedError(
-            err instanceof Error ? err.message : 'Unknown error',
-            ErrorCategory.UNKNOWN,
-            { 
-              operation: 'submission',
-              additionalData: { userMessage: 'An unexpected error occurred during submission' }
-            }
-          );
+      let enhancedError: EnhancedError;
+      
+      if (err instanceof Error && 'category' in err) {
+        enhancedError = err as EnhancedError;
+      } else {
+        // Analyze the error to provide more specific categorization
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        let category = ErrorCategory.UNKNOWN;
+        let userMessage = 'An unexpected error occurred during submission';
+        
+        // Network-related errors
+        if (errorMessage.includes('fetch') || errorMessage.includes('network') || 
+            errorMessage.includes('timeout') || errorMessage.includes('connection')) {
+          category = ErrorCategory.NETWORK;
+          userMessage = 'Network connection failed. Please check your internet connection and try again.';
+        }
+        // Wallet-related errors
+        else if (errorMessage.includes('wallet') || errorMessage.includes('MetaMask') || 
+                 errorMessage.includes('provider') || errorMessage.includes('signer')) {
+          category = ErrorCategory.WALLET;
+          userMessage = 'Wallet connection issue. Please ensure your wallet is connected and try again.';
+        }
+        // Blockchain/transaction errors
+        else if (errorMessage.includes('gas') || errorMessage.includes('transaction') || 
+                 errorMessage.includes('revert') || errorMessage.includes('blockchain')) {
+          category = ErrorCategory.BLOCKCHAIN;
+          userMessage = 'Blockchain transaction failed. This might be due to network congestion or insufficient gas.';
+        }
+        // IPFS upload errors
+        else if (errorMessage.includes('ipfs') || errorMessage.includes('upload') || 
+                 errorMessage.includes('file')) {
+          category = ErrorCategory.IPFS;
+          userMessage = 'File upload failed. Please check your files and try again.';
+        }
+        // Validation errors
+        else if (errorMessage.includes('validation') || errorMessage.includes('invalid') || 
+                 errorMessage.includes('required')) {
+          category = ErrorCategory.VALIDATION;
+          userMessage = 'Please check your input and correct any errors before submitting.';
+        }
+        // Encryption errors
+        else if (errorMessage.includes('encrypt') || errorMessage.includes('password')) {
+          category = ErrorCategory.ENCRYPTION;
+          userMessage = 'Data encryption failed. Please verify your password and try again.';
+        }
+        
+        enhancedError = createEnhancedError(
+          errorMessage,
+          category,
+          { 
+            operation: 'submission',
+            additionalData: { userMessage }
+          }
+        );
+      }
       
       const userMessage = enhancedError.userMessage || enhancedError.message;
       const recoveryActions = enhancedError.recoveryActions || [];

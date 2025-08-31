@@ -307,7 +307,7 @@ export class NetworkErrorHandler {
         timestamp,
         recoverable: false,
         retryable: false,
-        userMessage: 'An unexpected error occurred. Please try again.',
+        userMessage: 'A network error occurred. Please check your connection and try again.',
         technicalDetails: error.message || 'No additional details available',
         suggestedActions: [
           'Try refreshing the page',

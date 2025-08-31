@@ -113,7 +113,7 @@ function getUserFriendlyMessage(category: ErrorCategory, originalMessage: string
     [ErrorCategory.PERMISSION]: 'Permission denied. You may not have access to this resource.',
     [ErrorCategory.RATE_LIMIT]: 'Too many requests. Please wait a moment and try again.',
     [ErrorCategory.SYSTEM]: 'System error occurred. Please try again later.',
-    [ErrorCategory.UNKNOWN]: 'An unexpected error occurred. Please try again.'
+    [ErrorCategory.UNKNOWN]: 'Something went wrong. Please check your connection and try again, or refresh the page if the issue persists.'
   };
   
   return messages[category] || originalMessage;
