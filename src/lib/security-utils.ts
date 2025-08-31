@@ -55,8 +55,6 @@ export class RateLimiter {
 
   constructor(config: RateLimitConfig) {
     this.config = {
-      windowMs: 15 * 60 * 1000, // 15 minutes default
-      maxRequests: 100, // 100 requests default
       skipSuccessfulRequests: false,
       skipFailedRequests: false,
       keyGenerator: (id) => id,
@@ -303,11 +301,11 @@ export class CSRFProtection {
  */
 export class InputSanitizer {
   private static readonly SCRIPT_PATTERNS = [
-    /<script[^>]*>.*?<\/script>/gis,
+    /<script[^>]*>[\s\S]*?<\/script>/gi,
     /javascript:/gi,
     /on\w+\s*=/gi,
-    /<iframe[^>]*>.*?<\/iframe>/gis,
-    /<object[^>]*>.*?<\/object>/gis,
+    /<iframe[^>]*>[\s\S]*?<\/iframe>/gi,
+    /<object[^>]*>[\s\S]*?<\/object>/gi,
     /<embed[^>]*>/gi,
     /<link[^>]*>/gi,
     /<meta[^>]*>/gi

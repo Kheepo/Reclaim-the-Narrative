@@ -677,6 +677,30 @@ export async function submitReport(
 }
 
 /**
+ * Estimate gas for submitting a report to the blockchain
+ */
+export async function estimateSubmitReportGas(
+  reportHash: string,
+  ipfsCIDs: string[],
+  signer: ethers.Signer
+): Promise<bigint> {
+  try {
+    const contract = getContract(signer);
+    
+    // Convert report hash to bytes32
+    const reportHashBytes32 = ethers.keccak256(ethers.toUtf8Bytes(reportHash));
+    
+    // Estimate gas for the transaction
+    const gasEstimate = await contract.submitReport.estimateGas(reportHashBytes32, ipfsCIDs);
+    
+    return gasEstimate;
+  } catch (error) {
+    console.error('Failed to estimate gas for report submission:', error);
+    throw new Error(`Failed to estimate gas: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+/**
  * Get a report from the blockchain
  */
 export async function getReport(reportHash: string): Promise<ReportData> {

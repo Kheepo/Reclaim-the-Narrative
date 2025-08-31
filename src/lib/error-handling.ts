@@ -8,6 +8,8 @@ export interface ErrorContext {
   userAgent?: string;
   url?: string;
   userId?: string;
+  timeout?: number;
+  elapsed?: number;
   additionalData?: Record<string, any>;
 }
 

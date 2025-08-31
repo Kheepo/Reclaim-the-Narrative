@@ -377,6 +377,59 @@ export function sanitizeText(text: string): string {
 }
 
 /**
+ * Validate password strength
+ */
+export function validatePasswordStrength(password: string): ValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  
+  if (!password) {
+    errors.push('Password is required');
+    return { isValid: false, errors, warnings };
+  }
+  
+  // Check minimum length
+  if (password.length < 8) {
+    errors.push('Password must be at least 8 characters long');
+  }
+  
+  // Check password strength
+  const hasUpperCase = /[A-Z]/.test(password);
+  const hasLowerCase = /[a-z]/.test(password);
+  const hasNumbers = /\d/.test(password);
+  const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+  
+  const strengthScore = [hasUpperCase, hasLowerCase, hasNumbers, hasSpecialChar].filter(Boolean).length;
+  
+  if (strengthScore < 2) {
+    errors.push('Password is too weak. Must contain at least 2 of: uppercase, lowercase, numbers, special characters');
+  } else if (strengthScore < 3) {
+    warnings.push('Password strength is moderate. Consider adding more character types');
+  }
+  
+  // Check for common weak patterns
+  const commonPatterns = [
+    /123456/,
+    /password/i,
+    /qwerty/i,
+    /(..)\1{2,}/ // repeated characters
+  ];
+  
+  for (const pattern of commonPatterns) {
+    if (pattern.test(password)) {
+      warnings.push('Password contains common patterns that may be easily guessed');
+      break;
+    }
+  }
+  
+  return {
+    isValid: errors.length === 0,
+    errors,
+    warnings
+  };
+}
+
+/**
  * Check if browser supports required features
  */
 export function validateBrowserCompatibility(): ValidationResult {

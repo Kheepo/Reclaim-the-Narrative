@@ -93,7 +93,7 @@ export class SubmissionManager {
     if (state.isSubmitting) {
       throw createEnhancedError(
         'Submission already in progress. Please wait for the current submission to complete.',
-        ErrorCategory.STATE_MANAGEMENT,
+        ErrorCategory.SYSTEM,
         { operation: 'double_submission_prevention', additionalData: { componentId: this.componentId } }
       );
     }
@@ -103,7 +103,7 @@ export class SubmissionManager {
     if (timeSinceLastSubmission < SUBMISSION_COOLDOWN && state.stage !== 'idle') {
       throw createEnhancedError(
         `Please wait ${Math.ceil((SUBMISSION_COOLDOWN - timeSinceLastSubmission) / 1000)} seconds before submitting again.`,
-        ErrorCategory.STATE_MANAGEMENT,
+        ErrorCategory.SYSTEM,
         { operation: 'submission_cooldown', additionalData: { remainingTime: SUBMISSION_COOLDOWN - timeSinceLastSubmission } }
       );
     }

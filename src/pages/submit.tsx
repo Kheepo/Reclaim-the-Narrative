@@ -26,7 +26,7 @@ import {
 } from '@heroicons/react/24/outline';
 import WalletConnection, { useWalletConnection } from '../components/WalletConnection';
 import { useWallet } from '../hooks/useWallet';
-import { submitReport } from '../lib/blockchain';
+import { submitReport, estimateSubmitReportGas } from '../lib/blockchain';
 import { uploadEncryptedDataToIPFS } from '../lib/ipfs';
 import { encryptWithPassword, generateHash, generateFileHash } from '../lib/encryption';
 import { saveDraft, fileToBase64, DraftReport } from '../lib/storage';
@@ -45,6 +45,7 @@ import {
   validateTextSecurity, 
   validateNetworkConnectivity,
   validateBrowserCompatibility,
+  validatePasswordStrength,
   sanitizeText,
   formatFileSize
 } from '../lib/validation';
@@ -58,7 +59,8 @@ import {
   handleComponentError, 
   categorizeError,
   ErrorCategory,
-  CircuitBreaker
+  CircuitBreaker,
+  EnhancedError
 } from '../lib/error-handling';
 import { 
   checkConnectivity, 
@@ -74,7 +76,10 @@ import {
 } from '../lib/wallet-utils';
 import { 
   uploadToIPFS, 
-  calculateFileHash
+  calculateFileHash,
+  compressFile,
+  IPFSUploadOptions,
+  IPFSUploadResult
 } from '../lib/enhanced-ipfs';
 import { 
   SubmissionManager, 
@@ -192,13 +197,17 @@ export default function SubmitPage() {
       try {
         // Initialize utilities only on client side
         if (typeof window !== 'undefined') {
-          submissionManager.current = new SubmissionManager();
-          sessionManager.current = new SessionManager();
-          formStateManager.current = new FormStateManager();
-          rateLimiter.current = new RateLimiter();
+          submissionManager.current = new SubmissionManager('submit-page');
+          sessionManager.current = new SessionManager('submit-page');
+          formStateManager.current = new FormStateManager('submit-page');
+          rateLimiter.current = new RateLimiter({
+            windowMs: 5 * 60 * 1000, // 5 minutes
+            maxRequests: 3, // 3 submissions per 5 minutes
+            keyGenerator: (identifier) => `submission:${identifier}`
+          });
           csrfProtection.current = new CSRFProtection();
-          inputSanitizer.current = new InputSanitizer();
-          browserSecurityChecker.current = new BrowserSecurityChecker();
+          inputSanitizer.current = InputSanitizer;
+          browserSecurityChecker.current = BrowserSecurityChecker;
           networkMonitor.current = new NetworkMonitor();
 
           // Initialize CSRF protection
@@ -207,7 +216,10 @@ export default function SubmitPage() {
 
           // Check browser security features
           const securityCheck = BrowserSecurityChecker.checkSecurityFeatures();
-          setSecurityChecks(securityCheck);
+          setSecurityChecks({
+            passed: securityCheck.supported,
+            issues: securityCheck.missing
+          });
 
           // Initialize network monitoring
           networkMonitor.current.addListener((status) => {
@@ -351,7 +363,7 @@ export default function SubmitPage() {
     
     try {
       // Sanitize input
-      const sanitizedValue = inputSanitizer.current.sanitizeText(value);
+      const sanitizedValue = InputSanitizer.sanitizeText(value);
       
       // Real-time validation
       if (realTimeValidation) {
@@ -399,11 +411,11 @@ export default function SubmitPage() {
       setFormData(prev => ({ ...prev, [name]: sanitizedValue }));
       
       // Mark form as dirty
-      formStateManager.current.markDirty();
+      formStateManager.current?.touchField(name);
       
-    } catch (error) {
-      console.error('Error handling input change:', error);
-      toast.error('Invalid input detected');
+    } catch (err) {
+      console.error('Error handling input change:', err);
+      error('Invalid input detected');
     }
   };
 
@@ -413,8 +425,8 @@ export default function SubmitPage() {
     
     try {
       // Check rate limiting
-      if (!rateLimiter.current.checkLimit('fileUpload')) {
-        toast.error('Too many file uploads. Please wait before uploading more files.');
+      if (!rateLimiter.current?.isAllowed('fileUpload')) {
+        error('Too many file uploads. Please wait before uploading more files.');
         return;
       }
 
@@ -427,7 +439,7 @@ export default function SubmitPage() {
 
       const filesValidation = validateFiles(selectedFiles, fileValidationOptions);
       if (!filesValidation.isValid) {
-        toast.error(filesValidation.errors.join('\n'));
+        error(filesValidation.errors.join('\n'));
         return;
       }
 
@@ -437,14 +449,14 @@ export default function SubmitPage() {
           // Individual file validation
           const fileValidation = validateFile(file, fileValidationOptions);
           if (!fileValidation.isValid) {
-            toast.error(`${file.name}: ${fileValidation.errors.join(', ')}`);
+            error(`${file.name}: ${fileValidation.errors.join(', ')}`);
             continue;
           }
 
           // Security scan
-          const securityScan = inputSanitizer.current.scanFile(file);
-          if (!securityScan.isSafe) {
-            toast.error(`${file.name}: ${securityScan.issues.join(', ')}`);
+          const securityIssues = InputSanitizer.validateFileUpload(file);
+          if (securityIssues.length > 0) {
+            error(`${file.name}: ${securityIssues.join(', ')}`);
             continue;
           }
 
@@ -472,21 +484,21 @@ export default function SubmitPage() {
             // Check for duplicate files
             const existingFile = prev.find(f => f.name === file.name && f.size === file.size);
             if (existingFile) {
-              toast.warning(`File ${file.name} already exists`);
+              info(`File ${file.name} already exists`);
               return prev;
             }
             return [...prev, uploadedFile];
           });
 
-          toast.success(`File ${file.name} uploaded successfully`);
+          success(`File ${file.name} uploaded successfully`);
         } catch (fileError) {
           console.error(`Error processing file ${file.name}:`, fileError);
-          toast.error(`Failed to process file ${file.name}`);
+          error(`Failed to process file ${file.name}`);
         }
       }
-    } catch (error) {
-      console.error('Error handling file upload:', error);
-      toast.error('Failed to upload files. Please try again.');
+    } catch (uploadError) {
+      console.error('Error handling file upload:', uploadError);
+      error('Failed to upload files. Please try again.');
     } finally {
       // Reset file input
       if (fileInputRef.current) {
@@ -542,20 +554,20 @@ export default function SubmitPage() {
   const validateForm = async () => {
     try {
       // Check rate limiting for form submission
-      if (!rateLimiter.current.checkLimit('submission')) {
-        toast.error('Too many submission attempts. Please wait before trying again.');
+      if (!rateLimiter.current?.isAllowed('submission')) {
+        error('Too many submission attempts. Please wait before trying again.');
         return false;
       }
 
       // Validate CSRF token
-      if (!csrfProtection.current.validateToken(csrfToken)) {
-        toast.error('Security validation failed. Please refresh the page.');
+      if (!csrfProtection.current?.validateToken('submit-session', csrfToken)) {
+        error('Security validation failed. Please refresh the page.');
         return false;
       }
 
       // Check network connectivity
       if (networkStatus === 'offline') {
-        toast.error('No internet connection. Please check your network and try again.');
+        error('No internet connection. Please check your network and try again.');
         return false;
       }
 
@@ -577,7 +589,7 @@ export default function SubmitPage() {
       }, formValidationOptions);
 
       if (!validation.isValid) {
-        toast.error(validation.errors.join('\n'));
+        error(validation.errors.join('\n'));
         return false;
       }
 
@@ -591,7 +603,7 @@ export default function SubmitPage() {
 
         const filesValidation = validateFiles(files.map(f => f.file), fileValidationOptions);
         if (!filesValidation.isValid) {
-          toast.error(`File validation failed: ${filesValidation.errors.join(', ')}`);
+          error(`File validation failed: ${filesValidation.errors.join(', ')}`);
           return false;
         }
       }
@@ -599,20 +611,20 @@ export default function SubmitPage() {
       // Check browser compatibility
       const browserCheck = validateBrowserCompatibility();
       if (!browserCheck.isValid) {
-        toast.error(`Browser compatibility issues: ${browserCheck.errors.join(', ')}`);
+        error(`Browser compatibility issues: ${browserCheck.errors.join(', ')}`);
         return false;
       }
 
       // Validate wallet connection
       if (!isConnected || !address) {
-        toast.error('Please connect your wallet to submit a report.');
+        error('Please connect your wallet to submit a report.');
         return false;
       }
 
       // Check wallet availability and network
       const walletInfo = await getCurrentWalletInfo();
-      if (!walletInfo.isConnected) {
-        toast.error('Wallet connection lost. Please reconnect your wallet.');
+      if (!walletInfo || !walletInfo.isConnected) {
+        error('Wallet connection lost. Please reconnect your wallet.');
         return false;
       }
 
@@ -621,14 +633,14 @@ export default function SubmitPage() {
         const balance = parseFloat(walletInfo.balance);
         const hasBalance = balance > 0.001; // Minimum ETH for gas
       if (!hasBalance) {
-        toast.error('Insufficient balance for transaction fees. Please add funds to your wallet.');
+        error('Insufficient balance for transaction fees. Please add funds to your wallet.');
         return false;
       }
 
       return true;
-    } catch (error) {
-      console.error('Form validation error:', error);
-      toast.error('Validation failed. Please try again.');
+    } catch (validationError) {
+      console.error('Form validation error:', validationError);
+      error('Validation failed. Please try again.');
       return false;
     }
   };
@@ -639,11 +651,10 @@ export default function SubmitPage() {
   // Initialize circuit breaker
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      submissionCircuitBreaker.current = new CircuitBreaker({
-        failureThreshold: 3,
-        recoveryTimeout: 60000, // 1 minute
-        monitorTimeout: 30000   // 30 seconds
-      });
+      submissionCircuitBreaker.current = new CircuitBreaker(
+        3,      // failureThreshold
+        60000   // recoveryTimeout (1 minute)
+      );
     }
   }, []);
 
@@ -652,14 +663,14 @@ export default function SubmitPage() {
     e.preventDefault();
     
     // Prevent double submissions
-    if (!submissionManager.current.canSubmit()) {
-      toast.error('Submission already in progress. Please wait.');
+    if (submissionManager.current?.getState().isSubmitting) {
+      error('Submission already in progress. Please wait.');
       return;
     }
 
     // Check circuit breaker state
-    if (submissionCircuitBreaker.current && submissionCircuitBreaker.current.getState() === 'open') {
-      toast.error('Service temporarily unavailable due to repeated failures. Please try again later.');
+    if (submissionCircuitBreaker.current && submissionCircuitBreaker.current.getState().state === 'OPEN') {
+      error('Service temporarily unavailable due to repeated failures. Please try again later.');
       return;
     }
 
@@ -668,7 +679,7 @@ export default function SubmitPage() {
     if (!isValid) return;
     
     // Start submission process
-    submissionManager.current.startSubmission();
+    submissionManager.current?.startSubmission();
     setIsSubmitting(true);
     setSubmitStatus({ step: 'Preparing', message: 'Preparing report data...', type: 'info' });
     setUploadProgress(0);
@@ -678,8 +689,8 @@ export default function SubmitPage() {
       setCurrentOperation('Checking network connectivity...');
       const connectivityResults = await Promise.allSettled([
         checkConnectivity(),
-        robustFetch('https://api.github.com', { timeout: 5000 }),
-        robustFetch('https://ipfs.io', { timeout: 5000 })
+        robustFetch('https://api.github.com'),
+        robustFetch('https://ipfs.io')
       ]);
       
       const successfulChecks = connectivityResults.filter(result => result.status === 'fulfilled').length;
@@ -688,9 +699,12 @@ export default function SubmitPage() {
           'Complete network connectivity failure',
           ErrorCategory.NETWORK,
           { 
-            retryable: true, 
-            userMessage: 'No internet connection detected. Please check your network and try again.',
-            recoveryActions: [{ type: 'check_network', description: 'Check your internet connection' }]
+            operation: 'network_connectivity_check',
+            additionalData: {
+              retryable: true, 
+              userMessage: 'No internet connection detected. Please check your network and try again.',
+              recoveryActions: [{ type: 'check_network', description: 'Check your internet connection' }]
+            }
           }
         );
       } else if (successfulChecks < 2) {
@@ -718,7 +732,13 @@ export default function SubmitPage() {
         throw createEnhancedError(
           'Weak encryption password',
           ErrorCategory.VALIDATION,
-          { userMessage: `Password requirements: ${passwordValidation.errors.join(', ')}` }
+          { 
+            operation: 'password-validation',
+            additionalData: { 
+              userMessage: `Password requirements: ${passwordValidation.errors.join(', ')}`,
+              validationErrors: passwordValidation.errors
+            }
+          }
         );
       }
 
@@ -763,8 +783,8 @@ export default function SubmitPage() {
       
       // Enhanced IPFS upload with adaptive timeout and exponential backoff
       const baseUploadOptions: IPFSUploadOptions = {
-        onProgress: (progress) => {
-          setUploadProgress(40 + progress * 0.2); // 40-60% for IPFS upload
+        onProgress: (progressData) => {
+          setUploadProgress(40 + progressData.progress * 0.2); // 40-60% for IPFS upload
         },
         timeout: 120000, // 2 minutes base timeout
         retryAttempts: 3
@@ -772,12 +792,12 @@ export default function SubmitPage() {
       
       // Upload main report data with enhanced retry mechanism
       const encryptedDataBytes = Uint8Array.from(atob(encryptedData.encryptedData), c => c.charCodeAt(0));
+      const encryptedDataFile = new File([encryptedDataBytes], `report-${Date.now()}.json`, { type: 'application/json' });
       const mainUploadResult = await retryWithExponentialBackoff(
         async () => {
           return await withAdaptiveTimeout(
             uploadToIPFS(
-              encryptedDataBytes,
-              `report-${Date.now()}.json`,
+              encryptedDataFile,
               baseUploadOptions
             ),
             networkStatus === 'online' ? 120000 : 180000 // Adaptive timeout based on network
@@ -809,24 +829,27 @@ export default function SubmitPage() {
           try {
             const uploadResult = await retryWithExponentialBackoff(
               async () => {
-                return await withEnhancedTimeout(
+                const { promise } = withEnhancedTimeout(
                   uploadToIPFS(
                     file,
-                    `file-${Date.now()}-${file.name}`,
                     {
                       ...baseUploadOptions,
-                      onProgress: (progress) => {
-                        const fileProgress = (i + progress) / processedFiles.length;
+                      onProgress: (progressData) => {
+                        const fileProgress = (i + progressData.progress / 100) / processedFiles.length;
                         setUploadProgress(40 + fileProgress * 0.2);
                       }
                     }
                   ),
-                  networkStatus === 'online' ? 180000 : 240000, // Longer timeout for files
-                  `Uploading file ${file.name}`,
-                  (progress) => {
-                    setCurrentOperation(`Uploading ${file.name} (${Math.round(progress * 100)}%)...`);
+                  {
+                    timeoutMs: networkStatus === 'online' ? 180000 : 240000,
+                    operation: `Uploading file ${file.name}`,
+                    onProgress: (elapsed, remaining) => {
+                      const progress = elapsed / (elapsed + remaining);
+                      setCurrentOperation(`Uploading ${file.name} (${Math.round(progress * 100)}%)...`);
+                    }
                   }
                 );
+                return await promise;
               },
               {
                 maxAttempts: 3,
@@ -883,17 +906,23 @@ export default function SubmitPage() {
               throw createEnhancedError(
                 'No wallet detected',
                 ErrorCategory.WALLET,
-                { userMessage: 'Please install MetaMask or another Web3 wallet' }
+                { 
+                  operation: 'wallet-detection',
+                  additionalData: { userMessage: 'Please install MetaMask or another Web3 wallet' }
+                }
               );
             }
             
             // Verify network connectivity
             const networkCheck = await checkConnectivity();
-            if (!networkCheck.isOnline) {
+            if (!networkCheck.isConnected) {
               throw createEnhancedError(
                 'Network connectivity required',
                 ErrorCategory.NETWORK,
-                { userMessage: 'Please check your internet connection' }
+                { 
+                  operation: 'network-check',
+                  additionalData: { userMessage: 'Please check your internet connection' }
+                }
               );
             }
             
@@ -902,7 +931,10 @@ export default function SubmitPage() {
               throw createEnhancedError(
                 'Failed to get wallet signer',
                 ErrorCategory.WALLET,
-                { userMessage: 'Unable to connect to wallet. Please ensure it is unlocked.' }
+                { 
+                  operation: 'wallet-signer',
+                  additionalData: { userMessage: 'Unable to connect to wallet. Please ensure it is unlocked.' }
+                }
               );
             }
             
@@ -917,15 +949,21 @@ export default function SubmitPage() {
               if (error.message.includes('User rejected') || error.message.includes('User denied')) {
                 throw createEnhancedError(
                   'User rejected wallet connection',
-                  ErrorCategory.USER_ACTION,
-                  { userMessage: 'Wallet connection was cancelled by user' }
+                  ErrorCategory.VALIDATION,
+                  { 
+                    operation: 'wallet-connection',
+                    additionalData: { userMessage: 'Wallet connection was cancelled by user' }
+                  }
                 );
               }
               if (error.message.includes('network') || error.message.includes('connection')) {
                 throw createEnhancedError(
                   'Network error during wallet connection',
                   ErrorCategory.NETWORK,
-                  { userMessage: 'Network issue detected. Please check your connection and try again.' }
+                  { 
+                    operation: 'wallet-connection',
+                    additionalData: { userMessage: 'Network issue detected. Please check your connection and try again.' }
+                  }
                 );
               }
             }
@@ -938,19 +976,20 @@ export default function SubmitPage() {
           maxDelay: 5000,
           shouldRetry: (error) => {
             // Don't retry if user explicitly rejected or if it's a user action
-            if (error.category === ErrorCategory.USER_ACTION) {
+            const enhancedError = error as any;
+            if (enhancedError.category === ErrorCategory.VALIDATION) {
               return false;
             }
             // Retry for network and wallet errors
-            return error.category === ErrorCategory.NETWORK || 
-                   error.category === ErrorCategory.WALLET;
+            return enhancedError.category === ErrorCategory.NETWORK || 
+                   enhancedError.category === ErrorCategory.WALLET;
           },
           onRetry: (attempt, error) => {
             console.log(`Wallet connection attempt ${attempt} failed:`, error.message);
             setSubmitStatus({ 
               step: 'Retrying wallet connection...', 
               message: `Attempt ${attempt}/3 - Please check your wallet`, 
-              type: 'warning' 
+              type: 'info' 
             });
           }
         }
@@ -962,50 +1001,63 @@ export default function SubmitPage() {
       const gasEstimate = await retryWithExponentialBackoff(
         async () => {
           try {
-            const estimate = await estimateGas(address, reportHash, allHashes);
-            
-            // Enhanced gas validation
-            if (!estimate.canAfford) {
-              const shortfall = parseFloat(estimate.estimatedGas) - parseFloat(estimate.balance);
+            if (!address) {
               throw createEnhancedError(
-                'Insufficient funds for gas',
+                'Wallet address not available',
                 ErrorCategory.WALLET,
                 { 
-                  userMessage: `Need ${estimate.estimatedGas} ETH for gas, but wallet has ${estimate.balance} ETH (shortfall: ${shortfall.toFixed(6)} ETH)`,
-                  recoveryActions: [
-                    { type: 'fund_wallet', description: 'Add funds to your wallet' },
-                    { type: 'reduce_gas', description: 'Try again later when gas prices are lower' }
-                  ]
+                  operation: 'gas-estimation',
+                  additionalData: { userMessage: 'Please connect your wallet first.' }
                 }
               );
             }
+            const currentSigner = await getSigner();
+            if (!currentSigner) {
+              throw createEnhancedError(
+                'Unable to get wallet signer',
+                ErrorCategory.WALLET,
+                { 
+                  operation: 'gas-estimation',
+                  additionalData: { userMessage: 'Please ensure your wallet is connected and unlocked.' }
+                }
+              );
+            }
+            const gasEstimate = await estimateSubmitReportGas(reportHash, allHashes, currentSigner);
             
-            // Warn if gas price is unusually high
-            const gasPrice = parseFloat(estimate.estimatedGas);
-            if (gasPrice > 0.01) { // More than 0.01 ETH
-              console.warn('High gas price detected:', gasPrice, 'ETH');
+            // Log gas estimate for debugging
+            console.log('Gas estimate for report submission:', gasEstimate.toString());
+            
+            // Warn if gas estimate is unusually high (more than 500,000 gas)
+            if (gasEstimate > BigInt(500000)) {
+              console.warn('High gas estimate detected:', gasEstimate.toString());
               setSubmitStatus({ 
                 step: 'High gas cost detected', 
-                message: `Gas cost: ${gasPrice.toFixed(6)} ETH. Continue?`, 
-                type: 'warning' 
+                message: `Gas estimate: ${gasEstimate.toString()} units. Continue?`, 
+                type: 'info' 
               });
             }
             
-            return estimate;
+            return gasEstimate;
           } catch (error) {
             if (error instanceof Error) {
               if (error.message.includes('network') || error.message.includes('connection')) {
                 throw createEnhancedError(
                   'Network error during gas estimation',
                   ErrorCategory.NETWORK,
-                  { userMessage: 'Unable to estimate gas costs. Please check your connection.' }
+                  { 
+                    operation: 'gas-estimation',
+                    additionalData: { userMessage: 'Unable to estimate gas costs. Please check your connection.' }
+                  }
                 );
               }
               if (error.message.includes('revert') || error.message.includes('execution')) {
                 throw createEnhancedError(
                   'Transaction would fail',
                   ErrorCategory.BLOCKCHAIN,
-                  { userMessage: 'Transaction simulation failed. Please check your inputs.' }
+                  { 
+                    operation: 'gas-estimation',
+                    additionalData: { userMessage: 'Transaction simulation failed. Please check your inputs.' }
+                  }
                 );
               }
             }
@@ -1017,14 +1069,15 @@ export default function SubmitPage() {
           baseDelay: 2000,
           shouldRetry: (error) => {
             // Retry on network errors, but not on insufficient funds or validation errors
-            return error.category === ErrorCategory.NETWORK;
+            const enhancedError = error as any;
+            return enhancedError.category === ErrorCategory.NETWORK;
           },
           onRetry: (attempt, error) => {
             console.log(`Gas estimation attempt ${attempt} failed:`, error.message);
             setSubmitStatus({ 
               step: 'Retrying gas estimation...', 
               message: `Attempt ${attempt}/3`, 
-              type: 'warning' 
+              type: 'info' 
             });
           }
         }
@@ -1038,11 +1091,14 @@ export default function SubmitPage() {
           try {
             // Check network status before submission
             const networkCheck = await checkConnectivity();
-            if (!networkCheck.isOnline) {
+            if (!networkCheck.isConnected) {
               throw createEnhancedError(
                 'Network required for blockchain submission',
                 ErrorCategory.NETWORK,
-                { userMessage: 'Please check your internet connection before submitting.' }
+                { 
+                  operation: 'blockchain-submission',
+                  additionalData: { userMessage: 'Please check your internet connection before submitting.' }
+                }
               );
             }
             
@@ -1052,7 +1108,10 @@ export default function SubmitPage() {
               throw createEnhancedError(
                 'Wallet disconnected',
                 ErrorCategory.WALLET,
-                { userMessage: 'Wallet connection lost. Please reconnect and try again.' }
+                { 
+                  operation: 'blockchain-submission',
+                  additionalData: { userMessage: 'Wallet connection lost. Please reconnect and try again.' }
+                }
               );
             }
             
@@ -1063,7 +1122,10 @@ export default function SubmitPage() {
               throw createEnhancedError(
                 'Invalid transaction result',
                 ErrorCategory.BLOCKCHAIN,
-                { userMessage: 'Transaction submission failed. Please try again.' }
+                { 
+                  operation: 'blockchain-submission',
+                  additionalData: { userMessage: 'Transaction submission failed. Please try again.' }
+                }
               );
             }
             
@@ -1074,8 +1136,11 @@ export default function SubmitPage() {
               if (error.message.includes('user rejected') || error.message.includes('denied')) {
                 throw createEnhancedError(
                   'Transaction rejected by user',
-                  ErrorCategory.USER_ACTION,
-                  { userMessage: 'Transaction was cancelled by user.' }
+                  ErrorCategory.VALIDATION,
+                  { 
+                    operation: 'blockchain-submission',
+                    additionalData: { userMessage: 'Transaction was cancelled by user.' }
+                  }
                 );
               }
               if (error.message.includes('insufficient funds')) {
@@ -1083,8 +1148,11 @@ export default function SubmitPage() {
                   'Insufficient funds',
                   ErrorCategory.WALLET,
                   { 
-                    userMessage: 'Insufficient funds for transaction. Please add funds to your wallet.',
-                    recoveryActions: [{ type: 'fund_wallet', description: 'Add ETH to your wallet' }]
+                    operation: 'blockchain-submission',
+                    additionalData: {
+                      userMessage: 'Insufficient funds for transaction. Please add funds to your wallet.',
+                      recoveryActions: [{ type: 'fund_wallet', description: 'Add ETH to your wallet' }]
+                    }
                   }
                 );
               }
@@ -1093,8 +1161,11 @@ export default function SubmitPage() {
                   'Gas limit exceeded',
                   ErrorCategory.BLOCKCHAIN,
                   { 
-                    userMessage: 'Transaction requires too much gas. Please try again later.',
-                    recoveryActions: [{ type: 'retry_later', description: 'Wait for lower gas prices' }]
+                    operation: 'blockchain-submission',
+                    additionalData: {
+                      userMessage: 'Transaction requires too much gas. Please try again later.',
+                      recoveryActions: [{ type: 'retry_later', description: 'Wait for lower gas prices' }]
+                    }
                   }
                 );
               }
@@ -1103,8 +1174,11 @@ export default function SubmitPage() {
                   'Transaction nonce error',
                   ErrorCategory.BLOCKCHAIN,
                   { 
-                    userMessage: 'Transaction ordering issue. Please refresh and try again.',
-                    recoveryActions: [{ type: 'refresh', description: 'Refresh the page and retry' }]
+                    operation: 'blockchain-submission',
+                    additionalData: {
+                      userMessage: 'Transaction ordering issue. Please refresh and try again.',
+                      recoveryActions: [{ type: 'refresh', description: 'Refresh the page and retry' }]
+                    }
                   }
                 );
               }
@@ -1112,7 +1186,10 @@ export default function SubmitPage() {
                 throw createEnhancedError(
                   'Network error during submission',
                   ErrorCategory.NETWORK,
-                  { userMessage: 'Network issue detected. Please check your connection and try again.' }
+                  { 
+                    operation: 'blockchain-submission',
+                    additionalData: { userMessage: 'Network issue detected. Please check your connection and try again.' }
+                  }
                 );
               }
             }
@@ -1125,13 +1202,14 @@ export default function SubmitPage() {
           maxDelay: 10000,
           shouldRetry: (error) => {
             // Don't retry user actions or wallet issues
-            if (error.category === ErrorCategory.USER_ACTION || 
-                error.category === ErrorCategory.WALLET) {
+            const enhancedError = error as any;
+            if (enhancedError.category === ErrorCategory.VALIDATION || 
+                enhancedError.category === ErrorCategory.WALLET) {
               return false;
             }
             // Retry network and some blockchain errors
-            return error.category === ErrorCategory.NETWORK || 
-                   (error.category === ErrorCategory.BLOCKCHAIN && 
+            return enhancedError.category === ErrorCategory.NETWORK || 
+                   (enhancedError.category === ErrorCategory.BLOCKCHAIN && 
                     (error.message.includes('nonce') || error.message.includes('timeout')));
           },
           onRetry: (attempt, error) => {
@@ -1139,7 +1217,7 @@ export default function SubmitPage() {
             setSubmitStatus({ 
               step: 'Retrying blockchain submission...', 
               message: `Attempt ${attempt}/3 - ${error.message}`, 
-              type: 'warning' 
+              type: 'info' 
             });
           }
         }
@@ -1157,13 +1235,12 @@ export default function SubmitPage() {
         type: 'success' 
       });
       
-      // Record success in circuit breaker
-      if (submissionCircuitBreaker.current) {
-        submissionCircuitBreaker.current.recordSuccess();
-      }
+      // Circuit breaker will automatically record success since no error was thrown
       
       // Mark form as clean after successful submission
-      formStateManager.current.markClean();
+      if (formStateManager.current) {
+        formStateManager.current.markAsSaved();
+      }
       
       // Generate and download certificate with enhanced error handling
       setTimeout(async () => {
@@ -1202,13 +1279,20 @@ export default function SubmitPage() {
           success('Report submitted successfully! Certificate generated.');
           
           // Clear form data after successful submission
-          setFormData({ title: '', description: '', category: '' });
+          setFormData({ 
+            title: '', 
+            description: '', 
+            category: '',
+            location: '',
+            dateTime: '',
+            additionalInfo: ''
+          });
           setFiles([]);
           setEncryptionPassword('');
           
         } catch (certError) {
           console.error('Failed to generate certificate:', certError);
-          const errorMessage = getErrorMessage(certError);
+          const errorMessage = certError instanceof Error ? certError.message : 'Unknown error occurred';
           setSubmitStatus({ 
             step: 'Warning', 
             message: 'Report submitted but certificate generation failed.', 
@@ -1221,21 +1305,21 @@ export default function SubmitPage() {
     } catch (err) {
       console.error('Failed to submit report:', err);
       
-      // Record failure in circuit breaker
-      if (submissionCircuitBreaker.current) {
-        submissionCircuitBreaker.current.recordFailure();
-      }
+      // Circuit breaker automatically records failure when execute() throws
       
       const enhancedError = err instanceof Error && 'category' in err 
         ? err as EnhancedError
         : createEnhancedError(
             err instanceof Error ? err.message : 'Unknown error',
             ErrorCategory.UNKNOWN,
-            { userMessage: 'An unexpected error occurred during submission' }
+            { 
+              operation: 'submission',
+              additionalData: { userMessage: 'An unexpected error occurred during submission' }
+            }
           );
       
-      const userMessage = getUserFriendlyMessage(enhancedError);
-      const recoveryActions = getRecoveryActions(enhancedError);
+      const userMessage = enhancedError.userMessage || enhancedError.message;
+      const recoveryActions = enhancedError.recoveryActions || [];
       
       setSubmitStatus({ 
         step: 'Error', 
@@ -1244,32 +1328,30 @@ export default function SubmitPage() {
       });
       
       // Enhanced error handling with automatic retry suggestions
-      if (isRetryableError(enhancedError)) {
+      if (enhancedError.isRetryable) {
         const retryMessage = `${userMessage}\n\nThis error is retryable. Would you like to try again?`;
         
         // Show retry option for retryable errors
-        if (recoveryActions.some(action => action.type === 'retry')) {
-          setTimeout(() => {
-            if (confirm(retryMessage)) {
-              handleSubmit(e as any); // Retry submission
-            }
-          }, 2000);
-        }
+        setTimeout(() => {
+          if (confirm(retryMessage)) {
+            handleSubmit(e as any); // Retry submission
+          }
+        }, 2000);
       }
       
       // Show recovery actions if available
       if (recoveryActions.length > 0) {
-        const actionMessages = recoveryActions.map(action => action.description).join(', ');
-        toast.error(`${userMessage}\n\nSuggested actions: ${actionMessages}`);
+        const actionMessages = recoveryActions.map(action => action.label).join(', ');
+        error(`${userMessage}\n\nSuggested actions: ${actionMessages}`);
       } else {
-        toast.error(userMessage);
+        error(userMessage);
       }
       
       // Log detailed error for debugging and monitoring
       console.error('Enhanced error details:', {
-        category: enhancedError.category,
+        category: enhancedError.code,
         context: enhancedError.context,
-        retryable: isRetryableError(enhancedError),
+        retryable: enhancedError.isRetryable,
         circuitBreakerState: submissionCircuitBreaker.current?.getState(),
         timestamp: new Date().toISOString(),
         userAgent: navigator.userAgent,
@@ -1277,7 +1359,7 @@ export default function SubmitPage() {
       });
       
     } finally {
-      submissionManager.current.endSubmission();
+      submissionManager.current?.resetSubmission();
       setIsSubmitting(false);
       setCurrentOperation('');
       

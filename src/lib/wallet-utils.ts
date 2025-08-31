@@ -580,7 +580,7 @@ export function formatBalance(balance: string, decimals = 18, precision = 4): st
     const wholePart = balanceNum / divisor;
     const fractionalPart = balanceNum % divisor;
     
-    if (fractionalPart === 0n) {
+    if (fractionalPart === BigInt(0)) {
       return wholePart.toString();
     }
     
