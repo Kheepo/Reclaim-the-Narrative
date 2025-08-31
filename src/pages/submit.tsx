@@ -25,7 +25,8 @@ import {
   DocumentTextIcon
 } from '@heroicons/react/24/outline';
 import WalletConnection, { useWalletConnection } from '../components/WalletConnection';
-import { submitReport, getProvider } from '../lib/blockchain';
+import { useWallet } from '../hooks/useWallet';
+import { submitReport } from '../lib/blockchain';
 import { uploadEncryptedDataToIPFS } from '../lib/ipfs';
 import { encryptWithPassword, generateHash, generateFileHash } from '../lib/encryption';
 import { saveDraft, fileToBase64, DraftReport } from '../lib/storage';
@@ -67,6 +68,7 @@ const CATEGORIES = [
 export default function SubmitPage() {
   const router = useRouter();
   const { isConnected, address } = useWalletConnection();
+  const { getSigner } = useWallet();
   const { success, error, info } = useToastHelpers();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
@@ -379,8 +381,10 @@ export default function SubmitPage() {
       setUploadProgress(80);
       
       // Submit to blockchain
-      const provider = getProvider();
-      const signer = await provider.getSigner();
+      const signer = await getSigner();
+      if (!signer) {
+        throw new Error('Failed to get wallet signer. Please ensure your wallet is connected.');
+      }
       const txResult = await submitReport(reportHash, [ipfsHash], signer);
       const txHash = txResult.hash;
       setTransactionHash(txHash);
