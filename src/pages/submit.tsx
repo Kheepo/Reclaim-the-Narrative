@@ -27,6 +27,7 @@ import {
 import WalletConnection, { useWalletConnection } from '../components/WalletConnection';
 import { useWallet } from '../hooks/useWallet';
 import { submitReport, estimateSubmitReportGas } from '../lib/blockchain';
+import { ethers } from 'ethers';
 import { uploadEncryptedDataToIPFS } from '../lib/ipfs';
 import { encryptWithPassword, generateHash, generateFileHash } from '../lib/encryption';
 import { saveDraft, fileToBase64, DraftReport } from '../lib/storage';
@@ -615,25 +616,29 @@ export default function SubmitPage() {
         return false;
       }
 
-      // Validate wallet connection
+      // Validate wallet connection using wagmi hooks
       if (!isConnected || !address) {
         error('Please connect your wallet to submit a report.');
         return false;
       }
 
-      // Check wallet availability and network
-      const walletInfo = await getCurrentWalletInfo();
-      if (!walletInfo || !walletInfo.isConnected) {
-        error('Wallet connection lost. Please reconnect your wallet.');
-        return false;
-      }
+      // Check wallet availability using wagmi
+      try {
+        const signer = await getSigner();
+        if (!signer) {
+          error('Wallet connection lost. Please reconnect your wallet.');
+          return false;
+        }
 
-      // Check sufficient balance for gas
-      // Check if wallet has sufficient balance (simplified check)
-        const balance = parseFloat(walletInfo.balance);
-        const hasBalance = balance > 0.001; // Minimum ETH for gas
-      if (!hasBalance) {
-        error('Insufficient balance for transaction fees. Please add funds to your wallet.');
+        // Check sufficient balance for gas using wagmi
+        const balance = await signer.provider?.getBalance(address);
+        if (!balance || balance.lt(ethers.utils.parseEther('0.001'))) {
+          error('Insufficient balance for transaction fees. Please add funds to your wallet.');
+          return false;
+        }
+      } catch (walletError) {
+        console.error('Wallet validation error:', walletError);
+        error('Wallet connection lost. Please reconnect your wallet.');
         return false;
       }
 
