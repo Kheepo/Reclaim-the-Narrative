@@ -699,8 +699,53 @@ export default function SubmitPage() {
         robustFetch('https://ipfs.io')
       ]);
       
-      const successfulChecks = connectivityResults.filter(result => result.status === 'fulfilled').length;
+      // Count actually successful checks, not just fulfilled promises
+      let successfulChecks = 0;
+      const checkDetails: string[] = [];
+      let serviceDetails: any = {};
+      
+      // Check main connectivity result
+      if (connectivityResults[0].status === 'fulfilled') {
+        const connectivityResult = (connectivityResults[0] as PromiseFulfilledResult<any>).value;
+        if (connectivityResult?.isConnected) {
+          successfulChecks++;
+          checkDetails.push(`Main connectivity: OK (${connectivityResult.connectedCount}/${connectivityResult.services?.length || 0} services)`);
+          serviceDetails = connectivityResult.serviceDetails || {};
+        } else {
+          checkDetails.push(`Main connectivity: Failed (${connectivityResult?.connectedCount || 0}/${connectivityResult?.services?.length || 0} services)`);
+          serviceDetails = connectivityResult?.serviceDetails || {};
+        }
+      } else {
+        checkDetails.push('Main connectivity: Error');
+      }
+      
+      // Check GitHub API
+      if (connectivityResults[1].status === 'fulfilled') {
+        successfulChecks++;
+        checkDetails.push('GitHub API: OK');
+      } else {
+        const error = (connectivityResults[1] as PromiseRejectedResult).reason;
+        checkDetails.push(`GitHub API: Failed (${error?.message || 'Unknown error'})`);
+      }
+      
+      // Check IPFS
+      if (connectivityResults[2].status === 'fulfilled') {
+        successfulChecks++;
+        checkDetails.push('IPFS: OK');
+      } else {
+        const error = (connectivityResults[2] as PromiseRejectedResult).reason;
+        checkDetails.push(`IPFS: Failed (${error?.message || 'Unknown error'})`);
+      }
+      
+      console.log('Connectivity check details:', checkDetails);
+      console.log('Service details:', serviceDetails);
+      
       if (successfulChecks === 0) {
+        // Generate detailed service status for user
+        const serviceStatusDetails = Object.entries(serviceDetails).map(([service, details]: [string, any]) => {
+          return `${service}: ${details.error || 'Connection failed'} (${details.responseTime || 'timeout'}ms)`;
+        }).join(', ');
+        
         throw createEnhancedError(
           'Complete network connectivity failure',
           ErrorCategory.NETWORK,
@@ -708,13 +753,29 @@ export default function SubmitPage() {
             operation: 'network_connectivity_check',
             additionalData: {
               retryable: true, 
-              userMessage: 'No internet connection detected. Please check your network and try again.',
-              recoveryActions: [{ type: 'check_network', description: 'Check your internet connection' }]
+              userMessage: `No internet connection detected. Service status: ${serviceStatusDetails || 'All services unreachable'}. Please check your network and try again.`,
+              recoveryActions: [
+                { type: 'check_network', description: 'Check your internet connection' },
+                { type: 'retry', description: 'Try again in a few moments' },
+                { type: 'check_firewall', description: 'Check firewall or proxy settings' }
+              ],
+              checkDetails,
+              serviceDetails
             }
           }
         );
       } else if (successfulChecks < 2) {
-        info(`Network connectivity check: ${successfulChecks} of ${connectivityResults.length} services reachable. Upload may take longer than usual.`);
+        // Generate detailed service status for limited connectivity
+        const failedServices = Object.entries(serviceDetails)
+          .filter(([_, details]: [string, any]) => !details.connected)
+          .map(([service, details]: [string, any]) => `${service} (${details.error || 'failed'})`);
+        
+        const warningMessage = `Network connectivity check: ${successfulChecks} of ${connectivityResults.length} services reachable. Upload may take longer than usual.${failedServices.length > 0 ? ` Failed services: ${failedServices.join(', ')}.` : ''}`;
+        
+        info(warningMessage);
+        console.warn('Limited connectivity:', checkDetails);
+      } else {
+        console.log('Good connectivity:', checkDetails);
       }
 
       // Prepare report data with enhanced validation
@@ -732,9 +793,17 @@ export default function SubmitPage() {
         }))
       };
       
-      // Validate encryption password strength
+      // Validate encryption password strength with enhanced debugging
+      console.log('Validating encryption password...');
+      console.log('Password provided:', !!encryptionPassword);
+      console.log('Password length:', encryptionPassword?.length || 0);
+      console.log('Password value (first 3 chars):', encryptionPassword?.substring(0, 3) || 'none');
+      
       const passwordValidation = validatePasswordStrength(encryptionPassword);
+      console.log('Password validation result:', passwordValidation);
+      
       if (!passwordValidation.isValid) {
+        console.error('Password validation failed:', passwordValidation.errors);
         throw createEnhancedError(
           'Weak encryption password',
           ErrorCategory.VALIDATION,
@@ -742,22 +811,92 @@ export default function SubmitPage() {
             operation: 'password-validation',
             additionalData: { 
               userMessage: `Password requirements: ${passwordValidation.errors.join(', ')}`,
-              validationErrors: passwordValidation.errors
+              validationErrors: passwordValidation.errors,
+              passwordLength: encryptionPassword?.length || 0
             }
           }
         );
       }
+      
+      console.log('Password validation passed successfully');
 
       setSubmitStatus({ step: 'Encrypting', message: 'Encrypting report data...', type: 'info' });
       setCurrentOperation('Encrypting report data...');
       setUploadProgress(20);
       
-      // Encrypt report data with timeout
-      const encryptedData = await withTimeout(
-        encryptWithPassword(JSON.stringify(reportData), encryptionPassword),
-        30000, // 30 seconds timeout
-        'Encryption timeout'
-      );
+      // Encrypt report data with enhanced error handling
+      let encryptedData;
+      try {
+        console.log('Starting encryption process...');
+        console.log('Password length:', encryptionPassword.length);
+        console.log('Report data size:', JSON.stringify(reportData).length);
+        
+        // Check Web Crypto API availability and secure context
+        console.log('Web Crypto API available:', !!window.crypto?.subtle);
+        console.log('Secure context (required for Web Crypto):', window.isSecureContext);
+        console.log('Current protocol:', window.location.protocol);
+        console.log('Crypto methods available:', {
+          generateKey: !!window.crypto?.subtle?.generateKey,
+          importKey: !!window.crypto?.subtle?.importKey,
+          deriveKey: !!window.crypto?.subtle?.deriveKey,
+          encrypt: !!window.crypto?.subtle?.encrypt,
+          digest: !!window.crypto?.subtle?.digest
+        });
+        
+        // Validate Web Crypto API before proceeding
+        if (!window.crypto?.subtle) {
+          throw new Error('Web Crypto API is not available. This browser may not support encryption features.');
+        }
+        
+        if (!window.isSecureContext) {
+          throw new Error('Secure context required. Please use HTTPS or localhost.');
+        }
+        
+        encryptedData = await withTimeout(
+          encryptWithPassword(JSON.stringify(reportData), encryptionPassword),
+          30000, // 30 seconds timeout
+          'Encryption timeout'
+        );
+        
+        console.log('Encryption completed successfully');
+      } catch (encryptionError) {
+        console.error('Encryption failed:', encryptionError);
+        
+        // Provide specific error messages based on the error type
+        const errorObj = encryptionError as Error;
+        let userMessage = 'Data encryption failed. Please verify your password and try again.';
+        let suggestedActions = ['Check Password'];
+        
+        if (errorObj.message.includes('timeout')) {
+          userMessage = 'Encryption timed out. This may be due to large data size or system performance.';
+          suggestedActions = ['Try Again', 'Reduce File Size'];
+        } else if (errorObj.message.includes('password')) {
+          userMessage = 'Invalid password format. Please ensure your password meets the requirements.';
+          suggestedActions = ['Check Password Requirements', 'Try Different Password'];
+        } else if (errorObj.message.includes('memory') || errorObj.message.includes('quota')) {
+          userMessage = 'Insufficient system resources for encryption. Try reducing data size.';
+          suggestedActions = ['Reduce File Size', 'Close Other Applications'];
+        } else if (errorObj.name === 'NotSupportedError') {
+          userMessage = 'Your browser does not support the required encryption features.';
+          suggestedActions = ['Update Browser', 'Try Different Browser'];
+        }
+        
+        throw createEnhancedError(
+          'Data encryption failed',
+          ErrorCategory.ENCRYPTION,
+          { 
+            operation: 'data-encryption',
+            additionalData: { 
+              userMessage,
+              suggestedActions,
+              passwordLength: encryptionPassword.length,
+              dataSize: JSON.stringify(reportData).length,
+              originalError: errorObj.message
+            }
+          },
+          errorObj
+        );
+      }
       
       // Process files with enhanced validation and hashing
       const fileHashes: string[] = [];

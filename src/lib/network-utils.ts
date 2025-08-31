@@ -22,6 +22,7 @@ export interface ServiceEndpoint {
 export interface ConnectivityCheckResult {
   isConnected: boolean;
   services: Record<string, boolean>;
+  serviceDetails?: Record<string, { connected: boolean; error?: string; responseTime?: number }>;
   networkStatus: NetworkStatus;
   timestamp: Date;
   connectedCount?: number;
@@ -79,27 +80,60 @@ export function getNetworkStatus(): NetworkStatus {
 }
 
 /**
- * Check connectivity to a specific endpoint
+ * Check connectivity to a specific endpoint with enhanced error reporting
  */
 export async function checkEndpointConnectivity(
   endpoint: ServiceEndpoint
-): Promise<boolean> {
+): Promise<{ connected: boolean; error?: string; responseTime?: number }> {
+  const startTime = performance.now();
+  
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), endpoint.timeout);
     
-    const response = await fetch(endpoint.url, {
-      method: 'HEAD',
-      mode: 'no-cors',
-      signal: controller.signal,
-      cache: 'no-cache'
-    });
+    // Try CORS-enabled request first for better error reporting
+    let response;
+    try {
+      response = await fetch(endpoint.url, {
+        method: 'HEAD',
+        signal: controller.signal,
+        cache: 'no-cache',
+        headers: {
+          'Cache-Control': 'no-cache'
+        }
+      });
+    } catch (corsError) {
+      // Fallback to no-cors mode if CORS fails
+      response = await fetch(endpoint.url, {
+        method: 'HEAD',
+        mode: 'no-cors',
+        signal: controller.signal,
+        cache: 'no-cache'
+      });
+    }
     
     clearTimeout(timeoutId);
-    return true;
+    const responseTime = performance.now() - startTime;
+    
+    // For no-cors requests, we can only check if the request completed
+    // For CORS requests, we can check the actual status
+    const isSuccessful = response.type === 'opaque' || (response.ok && response.status < 400);
+    
+    return {
+      connected: isSuccessful,
+      responseTime: Math.round(responseTime),
+      error: isSuccessful ? undefined : `HTTP ${response.status || 'unknown'}`
+    };
   } catch (error) {
+    const responseTime = performance.now() - startTime;
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    
     console.warn(`Connectivity check failed for ${endpoint.name}:`, error);
-    return false;
+    return {
+      connected: false,
+      responseTime: Math.round(responseTime),
+      error: errorMessage
+    };
   }
 }
 
@@ -128,13 +162,19 @@ export async function checkConnectivity(
   }
   
   const serviceChecks = await Promise.allSettled(
-    endpoints.map(async (endpoint) => ({
-      name: endpoint.name,
-      connected: await checkEndpointConnectivity(endpoint)
-    }))
+    endpoints.map(async (endpoint) => {
+      const result = await checkEndpointConnectivity(endpoint);
+      return {
+        name: endpoint.name,
+        connected: result.connected,
+        error: result.error,
+        responseTime: result.responseTime
+      };
+    })
   );
   
   const services: Record<string, boolean> = {};
+  const serviceDetails: Record<string, { connected: boolean; error?: string; responseTime?: number }> = {};
   let connectedCount = 0;
   let criticalConnectedCount = 0;
   
@@ -142,6 +182,12 @@ export async function checkConnectivity(
     const endpoint = endpoints[index];
     if (result.status === 'fulfilled') {
       services[result.value.name] = result.value.connected;
+      serviceDetails[result.value.name] = {
+        connected: result.value.connected,
+        error: result.value.error,
+        responseTime: result.value.responseTime
+      };
+      
       if (result.value.connected) {
         connectedCount++;
         if (endpoint.critical) {
@@ -150,6 +196,11 @@ export async function checkConnectivity(
       }
     } else {
       services[endpoints[index].name] = false;
+      serviceDetails[endpoints[index].name] = {
+        connected: false,
+        error: 'Check failed',
+        responseTime: undefined
+      };
     }
   });
   
@@ -162,6 +213,7 @@ export async function checkConnectivity(
   return {
     isConnected: networkStatus.isOnline && (hasCriticalConnection || hasMinimumConnections),
     services,
+    serviceDetails,
     networkStatus,
     timestamp: new Date(),
     connectedCount,
@@ -175,57 +227,117 @@ export async function checkConnectivity(
 export async function robustFetch(
   url: string,
   options: RequestInit = {},
-  fallbackUrls: string[] = []
+  maxRetries: number = 3,
+  baseDelay: number = 1000
 ): Promise<Response> {
-  const urls = [url, ...fallbackUrls];
   let lastError: Error;
+  const startTime = Date.now();
   
-  for (const currentUrl of urls) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      return await retryWithBackoff(async () => {
-        const response = await withTimeout(
-          fetch(currentUrl, {
-            ...options,
-            headers: {
-              'Cache-Control': 'no-cache',
-              ...options.headers
-            }
-          }),
-          10000 // 10 second timeout
-        );
-        
-        if (!response.ok) {
-          throw createEnhancedError(
-            `HTTP ${response.status}: ${response.statusText}`,
-            ErrorCategory.NETWORK,
-            { operation: 'fetch', additionalData: { url: currentUrl, status: response.status } }
-          );
-        }
-        
-        return response;
-      }, {
-        maxAttempts: 3,
-        baseDelay: 1000,
-        retryCondition: (error) => {
-          // Retry on network errors and 5xx status codes
-          return error.message.includes('fetch') ||
-                 error.message.includes('timeout') ||
-                 error.message.includes('50');
-        }
-      });
-    } catch (error) {
-      lastError = error as Error;
-      console.warn(`Failed to fetch from ${currentUrl}:`, error);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
       
-      // If this is the last URL, throw the error
-      if (currentUrl === urls[urls.length - 1]) {
+      const attemptStartTime = Date.now();
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      const responseTime = Date.now() - attemptStartTime;
+      
+      if (!response.ok && response.status >= 500) {
         throw createEnhancedError(
-          `All fetch attempts failed. Last error: ${lastError.message}`,
+          `Server error: ${response.status} ${response.statusText}`,
           ErrorCategory.NETWORK,
-          { operation: 'robust_fetch', additionalData: { urls, lastUrl: currentUrl } },
+          {
+            operation: 'fetch_request',
+            additionalData: {
+              url,
+              status: response.status,
+              statusText: response.statusText,
+              attempt,
+              maxRetries,
+              responseTime,
+              totalTime: Date.now() - startTime,
+              retryable: response.status >= 500 && response.status < 600
+            }
+          }
+        );
+      }
+      
+      return response;
+    } catch (error) {
+       lastError = error as Error;
+       const responseTime = Date.now() - startTime;
+       
+       // Determine if error is retryable
+       const errorObj = error as Error;
+       const isRetryable = (
+         errorObj.name === 'AbortError' || // Timeout
+         errorObj.name === 'TypeError' || // Network error
+         errorObj.message.includes('fetch') ||
+         errorObj.message.includes('network')
+       );
+      
+      if (attempt === maxRetries) {
+        // Determine error type for better user messaging
+         let errorType = 'unknown';
+         let userMessage = 'Network request failed. Please check your connection and try again.';
+         
+         if (errorObj.name === 'AbortError') {
+           errorType = 'timeout';
+           userMessage = 'Request timed out. The server may be slow or unreachable.';
+         } else if (errorObj.name === 'TypeError' && errorObj.message.includes('fetch')) {
+           errorType = 'network';
+           userMessage = 'Network connection failed. Please check your internet connection.';
+         } else if (errorObj.message.includes('CORS')) {
+           errorType = 'cors';
+           userMessage = 'Cross-origin request blocked. This may be a browser security restriction.';
+         }
+        
+        throw createEnhancedError(
+          `Network request failed after ${maxRetries} attempts`,
+          ErrorCategory.NETWORK,
+          {
+            operation: 'fetch_request',
+            additionalData: {
+              url,
+              attempts: maxRetries,
+              lastError: lastError.message,
+              errorType,
+              userMessage,
+              totalTime: responseTime,
+              retryable: isRetryable
+            }
+          },
           lastError
         );
       }
+      
+      // Only retry if error is retryable
+      if (!isRetryable) {
+        throw createEnhancedError(
+          `Non-retryable network error: ${lastError.message}`,
+          ErrorCategory.NETWORK,
+          {
+            operation: 'fetch_request',
+            additionalData: {
+              url,
+              attempt,
+              errorType: 'non_retryable',
+              userMessage: 'Request failed due to a non-recoverable error.',
+              retryable: false
+            }
+          },
+          lastError
+        );
+      }
+      
+      // Exponential backoff with jitter
+      const delay = baseDelay * Math.pow(2, attempt - 1) + Math.random() * 1000;
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
   
