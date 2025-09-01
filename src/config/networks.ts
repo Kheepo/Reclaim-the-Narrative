@@ -51,107 +51,89 @@ export const BLOCKDAG_TESTNET: BlockDAGNetworkConfig = {
   name: 'blockdag-testnet',
   displayName: 'BlockDAG Testnet',
   type: 'blockdag',
-  rpcUrl: process.env.NEXT_PUBLIC_BLOCKDAG_TESTNET_RPC_URL || 'https://rpc.primordial.bdagscan.com',
+  rpcUrl: process.env.NEXT_PUBLIC_RPC_URL_BLOCKDAG_TESTNET || process.env.NEXT_PUBLIC_BLOCKDAG_TESTNET_RPC_URL || 'https://testnet-rpc.blockdag.network',
   blockExplorerUrl: process.env.NEXT_PUBLIC_BLOCKDAG_TESTNET_EXPLORER || 'https://primordial.bdagscan.com',
   nativeCurrency: {
-    name: 'BlockDAG',
+    name: 'BDAG',
     symbol: 'BDAG',
     decimals: 18,
   },
-  testnet: true,
+  contractAddress: process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_BLOCKDAG_TESTNET || process.env.NEXT_PUBLIC_BLOCKDAG_TESTNET_CONTRACT_ADDRESS || '',
   enabled: true,
   features: {
-    eip1559: true,
-    multicall: true,
-    ensSupport: false,
+    dagConsensus: true,
+    parallelProcessing: true,
+    instantFinality: true,
   },
   performance: {
-    avgBlockTime: 0.1, // 100ms
-    tps: 100,
-    finality: 'fast',
-  },
-  dagFeatures: {
-    parallelProcessing: true,
-    powConsensus: true,
-    evmCompatibility: true,
-  },
-  contracts: {
-    gbvRegistry: process.env.NEXT_PUBLIC_BLOCKDAG_TESTNET_CONTRACT_ADDRESS,
+    avgBlockTime: 100,
+    tps: 100000,
+    finality: 'instant',
   },
 };
 
 export const BLOCKDAG_MAINNET: BlockDAGNetworkConfig = {
-  id: 1044, // BlockDAG Mainnet chain ID
+  id: 1044,
   name: 'blockdag-mainnet',
   displayName: 'BlockDAG Mainnet',
   type: 'blockdag',
-  rpcUrl: process.env.NEXT_PUBLIC_BLOCKDAG_MAINNET_RPC_URL || '',
+  rpcUrl: process.env.NEXT_PUBLIC_RPC_URL_BLOCKDAG_MAINNET || process.env.NEXT_PUBLIC_BLOCKDAG_MAINNET_RPC_URL || 'https://mainnet-rpc.blockdag.network',
   blockExplorerUrl: process.env.NEXT_PUBLIC_BLOCKDAG_MAINNET_EXPLORER || 'https://bdagscan.com',
   nativeCurrency: {
-    name: 'BlockDAG',
+    name: 'BDAG',
     symbol: 'BDAG',
     decimals: 18,
   },
-  testnet: false,
-  enabled: true, // Enable for development
+  contractAddress: process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_BLOCKDAG_MAINNET || process.env.NEXT_PUBLIC_BLOCKDAG_MAINNET_CONTRACT_ADDRESS || '',
+  enabled: true,
   features: {
-    eip1559: true,
-    multicall: true,
-    ensSupport: false,
+    dagConsensus: true,
+    parallelProcessing: true,
+    instantFinality: true,
   },
   performance: {
-    avgBlockTime: 0.1,
-    tps: 1000,
-    finality: 'fast',
-  },
-  dagFeatures: {
-    parallelProcessing: true,
-    powConsensus: true,
-    evmCompatibility: true,
-  },
-  contracts: {
-    gbvRegistry: process.env.NEXT_PUBLIC_BLOCKDAG_MAINNET_CONTRACT_ADDRESS,
+    avgBlockTime: 100,
+    tps: 100000,
+    finality: 'instant',
   },
 };
 
 // Ethereum Networks
 export const ETHEREUM_SEPOLIA: EthereumNetworkConfig = {
   id: 11155111,
-  name: 'sepolia',
+  name: 'ethereum-sepolia',
   displayName: 'Ethereum Sepolia',
   type: 'ethereum',
   layer: 1,
-  rpcUrl: process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL || 'https://ethereum-sepolia.publicnode.com',
+  rpcUrl: process.env.NEXT_PUBLIC_RPC_URL_SEPOLIA || process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL || 'https://ethereum-sepolia.publicnode.com',
   blockExplorerUrl: 'https://sepolia.etherscan.io',
   nativeCurrency: {
     name: 'Sepolia Ether',
-    symbol: 'SEP',
+    symbol: 'ETH',
     decimals: 18,
   },
+  contractAddress: process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_SEPOLIA || '',
   testnet: true,
   enabled: true,
   features: {
     eip1559: true,
     multicall: true,
-    ensSupport: true,
+    ensRegistry: true,
   },
   performance: {
-    avgBlockTime: 12,
+    avgBlockTime: 12000,
     tps: 15,
-    finality: 'standard',
-  },
-  contracts: {
-    gbvRegistry: process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_SEPOLIA,
+    finality: 'probabilistic',
   },
 };
 
 export const ETHEREUM_MAINNET: EthereumNetworkConfig = {
   id: 1,
-  name: 'mainnet',
+  name: 'ethereum-mainnet',
   displayName: 'Ethereum Mainnet',
   type: 'ethereum',
   layer: 1,
-  rpcUrl: process.env.NEXT_PUBLIC_MAINNET_RPC_URL || 'https://ethereum.publicnode.com',
+  rpcUrl: process.env.NEXT_PUBLIC_RPC_URL_MAINNET || process.env.NEXT_PUBLIC_MAINNET_RPC_URL || 'https://ethereum.publicnode.com',
   blockExplorerUrl: 'https://etherscan.io',
   nativeCurrency: {
     name: 'Ether',
@@ -179,10 +161,10 @@ export const ETHEREUM_MAINNET: EthereumNetworkConfig = {
 export const POLYGON_AMOY: EthereumNetworkConfig = {
   id: 80002,
   name: 'polygon-amoy',
-  displayName: 'Polygon Amoy',
+  displayName: 'Polygon Amoy Testnet',
   type: 'ethereum',
   layer: 2,
-  rpcUrl: process.env.NEXT_PUBLIC_POLYGON_AMOY_RPC_URL || 'https://rpc-amoy.polygon.technology',
+  rpcUrl: process.env.NEXT_PUBLIC_RPC_URL_AMOY || process.env.NEXT_PUBLIC_POLYGON_AMOY_RPC_URL || 'https://rpc-amoy.polygon.technology',
   blockExplorerUrl: 'https://amoy.polygonscan.com',
   nativeCurrency: {
     name: 'MATIC',
@@ -202,17 +184,17 @@ export const POLYGON_AMOY: EthereumNetworkConfig = {
     finality: 'fast',
   },
   contracts: {
-    gbvRegistry: process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_MUMBAI,
+    gbvRegistry: process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_AMOY || process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_MUMBAI,
   },
 };
 
 export const POLYGON_MAINNET: EthereumNetworkConfig = {
   id: 137,
-  name: 'polygon',
+  name: 'polygon-mainnet',
   displayName: 'Polygon Mainnet',
   type: 'ethereum',
   layer: 2,
-  rpcUrl: process.env.NEXT_PUBLIC_POLYGON_MAINNET_RPC_URL || 'https://polygon-bor.publicnode.com',
+  rpcUrl: process.env.NEXT_PUBLIC_RPC_URL_POLYGON || process.env.NEXT_PUBLIC_POLYGON_MAINNET_RPC_URL || 'https://polygon-bor.publicnode.com',
   blockExplorerUrl: 'https://polygonscan.com',
   nativeCurrency: {
     name: 'MATIC',

@@ -219,17 +219,71 @@ export function NetworkDiagnostic() {
                   <div>{status.error}</div>
                   {status.errorType === 'timeout' && (
                     <div className="text-xs mt-2 p-2 bg-yellow-50 text-yellow-700 rounded border">
-                      💡 <strong>Tip:</strong> Network connection is slow. Try again or check your internet connection.
+                      💡 <strong>Troubleshooting Steps:</strong>
+                      <ul className="list-disc list-inside mt-1 space-y-1">
+                        <li>Check your internet connection</li>
+                        <li>Try switching to a different network (WiFi/Mobile)</li>
+                        <li>Wait a moment and try again - the network might be experiencing high traffic</li>
+                        <li>For BlockDAG networks, timeouts are more common due to consensus mechanisms</li>
+                      </ul>
                     </div>
                   )}
                   {status.errorType === 'provider' && (
                     <div className="text-xs mt-2 p-2 bg-blue-50 text-blue-700 rounded border">
-                      💡 <strong>Tip:</strong> Make sure you have a Web3 wallet (like MetaMask) installed and connected.
+                      💡 <strong>Provider Configuration Issues:</strong>
+                      <ul className="list-disc list-inside mt-1 space-y-1">
+                        <li>Install a Web3 wallet like MetaMask, Trust Wallet, or Coinbase Wallet</li>
+                        <li>Check if your wallet is connected to the correct network</li>
+                        <li>Verify RPC endpoint configuration in environment variables</li>
+                        <li>For BlockDAG networks, ensure BLOCKDAG_TESTNET_RPC_URL is properly set</li>
+                        <li>Try refreshing the page or reconnecting your wallet</li>
+                      </ul>
                     </div>
                   )}
                   {status.errorType === 'network' && (
                     <div className="text-xs mt-2 p-2 bg-purple-50 text-purple-700 rounded border">
-                      💡 <strong>Tip:</strong> Check if you're connected to the correct blockchain network.
+                      💡 <strong>Network Configuration Issues:</strong>
+                      <ul className="list-disc list-inside mt-1 space-y-1">
+                        <li>Verify you're connected to the correct blockchain network</li>
+                        <li>Check if NEXT_PUBLIC_NETWORK environment variable matches supported networks</li>
+                        <li>Supported networks: Polygon Amoy (testnet), Polygon Mainnet, BlockDAG Testnet/Mainnet</li>
+                        <li>Update .env.local file with correct network configuration</li>
+                        <li>Ensure RPC URLs are accessible and properly formatted</li>
+                      </ul>
+                    </div>
+                  )}
+                  {status.error?.includes('Failed to initialize network provider') && (
+                    <div className="text-xs mt-2 p-2 bg-red-50 text-red-700 rounded border">
+                      🚨 <strong>Provider Initialization Failed:</strong>
+                      <ul className="list-disc list-inside mt-1 space-y-1">
+                        <li>Check .env.local file for missing or invalid RPC URLs</li>
+                        <li>Verify network configuration matches supported networks</li>
+                        <li>Ensure environment variables are properly formatted (no 'undefined' or 'null' values)</li>
+                        <li>For BlockDAG networks, confirm BLOCKDAG_TESTNET_RPC_URL and BLOCKDAG_MAINNET_RPC_URL are set</li>
+                        <li>Try restarting the development server after configuration changes</li>
+                      </ul>
+                    </div>
+                  )}
+                  {status.error?.includes('mumbai') && (
+                    <div className="text-xs mt-2 p-2 bg-orange-50 text-orange-700 rounded border">
+                      ⚠️ <strong>Deprecated Network Configuration:</strong>
+                      <ul className="list-disc list-inside mt-1 space-y-1">
+                        <li>Mumbai testnet is no longer supported</li>
+                        <li>Update NEXT_PUBLIC_NETWORK in .env.local to 'amoy' for Polygon testnet</li>
+                        <li>Polygon Amoy is the current testnet replacement for Mumbai</li>
+                        <li>Update your wallet to connect to Polygon Amoy network</li>
+                      </ul>
+                    </div>
+                  )}
+                  {status.error?.includes('Unknown network') && (
+                    <div className="text-xs mt-2 p-2 bg-indigo-50 text-indigo-700 rounded border">
+                      🔧 <strong>Network Not Recognized:</strong>
+                      <ul className="list-disc list-inside mt-1 space-y-1">
+                        <li>Check NEXT_PUBLIC_NETWORK value in .env.local</li>
+                        <li>Supported values: 'amoy', 'polygon', 'blockdag_testnet', 'blockdag_mainnet'</li>
+                        <li>Ensure the network is enabled in the configuration</li>
+                        <li>Verify contract addresses are configured for the selected network</li>
+                      </ul>
                     </div>
                   )}
                   {status.lastAttempt && (

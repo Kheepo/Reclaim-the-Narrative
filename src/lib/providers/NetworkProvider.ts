@@ -54,15 +54,25 @@ class NetworkProviderManager {
       ...config,
     };
 
-    // Delay provider initialization to avoid startup errors
-    // Providers will be created on-demand when first requested
+    // Initialize providers for enabled networks with error handling
+    try {
+      this.initializeProviders();
+    } catch (error) {
+      console.warn('Some providers failed to initialize:', error);
+    }
+    
     this.startHealthChecking();
   }
 
   private initializeProviders(): void {
     Object.values(SUPPORTED_NETWORKS).forEach(network => {
       if (network.enabled) {
-        this.createProviderPool(network);
+        try {
+          this.createProviderPool(network);
+        } catch (error) {
+          console.error(`Failed to initialize provider for network ${network.name} (${network.id}):`, error);
+          // Continue with other networks even if one fails
+        }
       }
     });
   }
@@ -81,13 +91,36 @@ class NetworkProviderManager {
       }
     }
 
-    const primaryProvider = new ethers.JsonRpcProvider(rpcUrl, {
-      chainId: network.id,
-      name: network.name,
-    });
+    // Validate RPC URL before creating provider
+    if (!rpcUrl || rpcUrl === 'undefined' || rpcUrl === 'null' || rpcUrl.trim() === '') {
+      const errorMsg = `Invalid RPC URL for network ${network.name} (${network.id}): ${rpcUrl}. Please check your environment variables.`;
+      console.error(errorMsg);
+      throw new Error(errorMsg);
+    }
 
-    // Configure provider timeouts and polling intervals
-    primaryProvider.pollingInterval = isBlockDAG ? 1000 : 4000; // Faster polling for BlockDAG
+    // Validate URL format
+    try {
+      new URL(rpcUrl);
+    } catch (error) {
+      const errorMsg = `Invalid RPC URL format for network ${network.name} (${network.id}): ${rpcUrl}`;
+      console.error(errorMsg);
+      throw new Error(errorMsg);
+    }
+
+    let primaryProvider: ethers.JsonRpcProvider;
+    try {
+      primaryProvider = new ethers.JsonRpcProvider(rpcUrl, {
+        chainId: network.id,
+        name: network.name,
+      });
+
+      // Configure provider timeouts and polling intervals
+      primaryProvider.pollingInterval = isBlockDAG ? 1000 : 4000; // Faster polling for BlockDAG
+    } catch (error) {
+      const errorMsg = `Failed to create provider for network ${network.name} (${network.id}): ${error}`;
+      console.error(errorMsg);
+      throw new Error(errorMsg);
+    }
     
     const fallbackProviders: ethers.JsonRpcProvider[] = [];
     
@@ -100,12 +133,16 @@ class NetworkProviderManager {
       ].filter(url => url !== rpcUrl);
       
       fallbackUrls.forEach(url => {
-        const fallbackProvider = new ethers.JsonRpcProvider(url, {
-          chainId: network.id,
-          name: `${network.name}-fallback`,
-        });
-        fallbackProvider.pollingInterval = 1000;
-        fallbackProviders.push(fallbackProvider);
+        try {
+          const fallbackProvider = new ethers.JsonRpcProvider(url, {
+            chainId: network.id,
+            name: `${network.name}-fallback`,
+          });
+          fallbackProvider.pollingInterval = 1000;
+          fallbackProviders.push(fallbackProvider);
+        } catch (error) {
+          console.warn(`Failed to create fallback provider for ${url}:`, error);
+        }
       });
     }
 
@@ -125,22 +162,109 @@ class NetworkProviderManager {
     });
 
     this.requestCounts.set(network.id, 0);
+    
+    console.debug(`Provider pool created for network ${network.name} (${network.id}) with ${fallbackProviders.length} fallback providers`);
   }
 
   public getProvider(chainId: number): ethers.JsonRpcProvider | null {
+    // Check circuit breaker first
+    if (this.isCircuitOpen(chainId)) {
+      const networkName = Object.values(SUPPORTED_NETWORKS).find(n => n.id === chainId)?.name || 'Unknown';
+      console.warn(`Circuit breaker is OPEN for network ${networkName} (${chainId}). Attempting fallback networks.`);
+      
+      // Try fallback networks when circuit is open
+      const fallbackChainIds = this.getFallbackNetworks(chainId);
+      for (const fallbackChainId of fallbackChainIds) {
+        if (!this.isCircuitOpen(fallbackChainId)) {
+          const fallbackProvider = this.getProvider(fallbackChainId);
+          if (fallbackProvider) {
+            const fallbackNetworkName = Object.values(SUPPORTED_NETWORKS).find(n => n.id === fallbackChainId)?.name || 'Unknown';
+            console.log(`Using fallback network ${fallbackNetworkName} (${fallbackChainId}) due to circuit breaker`);
+            return fallbackProvider;
+          }
+        }
+      }
+      
+      // Attempt to close circuit breaker as last resort
+      console.log(`All fallbacks failed, attempting to close circuit breaker for ${networkName} (${chainId})`);
+      this.attemptCircuitClose(chainId).catch(error => {
+        console.warn(`Circuit breaker close attempt failed:`, error);
+      });
+      
+      return null;
+    }
+
     let pool = this.providers.get(chainId);
     if (!pool) {
       // Lazy initialization: create provider pool on first request
       const network = Object.values(SUPPORTED_NETWORKS).find(n => n.id === chainId && n.enabled);
-      if (network) {
+      if (!network) {
+        console.error(`Network with chain ID ${chainId} is not supported or not enabled`);
+        return null;
+      }
+
+      try {
         this.createProviderPool(network);
         pool = this.providers.get(chainId);
+      } catch (error: any) {
+        console.error(`Failed to initialize provider for chain ${chainId} (${network.name}):`, error?.message || error);
+        
+        // Check if it's a configuration issue
+        if (error?.message?.includes('No RPC URL') || error?.message?.includes('Invalid RPC URL')) {
+          console.error(`Configuration error for ${network.name}: Please check your environment variables for RPC URLs`);
+        }
+        
+        return null;
       }
       
       if (!pool) {
-        console.warn(`No provider available for chain ID: ${chainId}`);
+        console.error(`Provider pool creation failed for chain ${chainId} (${network.name})`);
         return null;
       }
+    }
+
+    // Try fallback networks if requested network is unavailable or unhealthy
+    if (!pool || !pool.health.isHealthy) {
+      const fallbackChainIds = this.getFallbackNetworks(chainId);
+      const networkName = Object.values(SUPPORTED_NETWORKS).find(n => n.id === chainId)?.name || 'Unknown';
+      
+      console.warn(`Primary network ${networkName} (${chainId}) is ${!pool ? 'unavailable' : 'unhealthy'}. Attempting fallback networks...`);
+      
+      for (const fallbackChainId of fallbackChainIds) {
+        let fallbackPool = this.providers.get(fallbackChainId);
+        
+        // Try to initialize fallback network if not already initialized
+        if (!fallbackPool) {
+          const fallbackNetwork = Object.values(SUPPORTED_NETWORKS).find(n => n.id === fallbackChainId && n.enabled);
+          if (fallbackNetwork) {
+            try {
+              console.debug(`Initializing fallback network: ${fallbackNetwork.name} (${fallbackChainId})`);
+              this.createProviderPool(fallbackNetwork);
+              fallbackPool = this.providers.get(fallbackChainId);
+            } catch (error: any) {
+              console.warn(`Failed to initialize fallback network ${fallbackNetwork.name} (${fallbackChainId}):`, error?.message || error);
+              continue;
+            }
+          }
+        }
+        
+        if (fallbackPool && fallbackPool.health.isHealthy) {
+          const fallbackNetworkName = Object.values(SUPPORTED_NETWORKS).find(n => n.id === fallbackChainId)?.name || 'Unknown';
+          console.warn(`Successfully switched to fallback network: ${fallbackNetworkName} (${fallbackChainId})`);
+          return fallbackPool.primary;
+        }
+      }
+      
+      if (!pool) {
+        console.error(`No provider available for chain ID: ${chainId} (${networkName}). All fallback networks failed. Please check:
+1. Network configuration in .env.local
+2. RPC URL connectivity
+3. Network availability
+4. Firewall/proxy settings`);
+        return null;
+      }
+      
+      console.warn(`All fallback networks failed for ${networkName} (${chainId}). Attempting to use unhealthy primary provider as last resort.`);
     }
 
     const isBlockDAG = this.isBlockDAGNetwork(chainId);
@@ -151,7 +275,7 @@ class NetworkProviderManager {
     // Check if we're exceeding concurrent request limits
     const currentRequests = this.requestCounts.get(chainId) || 0;
     if (currentRequests >= maxRequests) {
-      console.warn(`Max concurrent requests reached for chain ${chainId} (${currentRequests}/${maxRequests})`);
+      console.warn(`Max concurrent requests reached for chain ${chainId} (${currentRequests}/${maxRequests}). Consider reducing request frequency.`);
       return null;
     }
 
@@ -169,8 +293,29 @@ class NetworkProviderManager {
       }
     }
 
-    console.error(`All providers failed for chain ${chainId}`);
+    const networkName = Object.values(SUPPORTED_NETWORKS).find(n => n.id === chainId)?.name || 'Unknown';
+    console.error(`All providers failed for chain ${chainId} (${networkName}). Check RPC endpoint connectivity and network configuration.`);
     return null;
+  }
+
+  private getFallbackNetworks(chainId: number): number[] {
+    // Define fallback priority based on network type and environment
+    const fallbackMap: Record<number, number[]> = {
+      80002: [137, 1043, 11155111], // Amoy -> Polygon, BlockDAG Testnet, Sepolia
+      137: [80002, 1044, 1], // Polygon -> Amoy, BlockDAG Mainnet, Ethereum
+      1043: [80002, 137, 11155111], // BlockDAG Testnet -> Amoy, Polygon, Sepolia
+      1044: [137, 80002, 1], // BlockDAG Mainnet -> Polygon, Amoy, Ethereum
+      11155111: [80002, 137, 1043], // Sepolia -> Amoy, Polygon, BlockDAG Testnet
+      1: [137, 1044, 80002] // Ethereum Mainnet -> Polygon, BlockDAG Mainnet, Amoy
+    };
+
+    const fallbacks = fallbackMap[chainId] || [80002, 137, 1043]; // Default fallbacks
+    
+    // Filter fallbacks to only include enabled networks
+    return fallbacks.filter(fallbackChainId => {
+      const network = Object.values(SUPPORTED_NETWORKS).find(n => n.id === fallbackChainId);
+      return network && network.enabled;
+    });
   }
 
   public async executeWithRetry<T>(
@@ -484,12 +629,125 @@ class NetworkProviderManager {
 
 
 
-  public destroy(): void {
+  public stopHealthChecking(): void {
     if (this.healthCheckInterval) {
       clearInterval(this.healthCheckInterval);
       this.healthCheckInterval = null;
     }
+  }
 
+  /**
+   * Attempts to recover unhealthy networks by reinitializing their providers
+   */
+  public async recoverUnhealthyNetworks(): Promise<void> {
+    const unhealthyNetworks = Array.from(this.providers.entries())
+      .filter(([_, pool]) => !pool.health.isHealthy)
+      .map(([chainId]) => chainId);
+
+    if (unhealthyNetworks.length === 0) {
+      console.debug('All networks are healthy, no recovery needed');
+      return;
+    }
+
+    console.log(`Attempting to recover ${unhealthyNetworks.length} unhealthy networks:`, unhealthyNetworks);
+
+    for (const chainId of unhealthyNetworks) {
+      const network = Object.values(SUPPORTED_NETWORKS).find(n => n.id === chainId);
+      if (!network || !network.enabled) {
+        console.warn(`Skipping recovery for disabled network ${chainId}`);
+        continue;
+      }
+
+      try {
+        console.debug(`Attempting recovery for network ${network.name} (${chainId})`);
+        
+        // Remove the unhealthy provider
+        this.providers.delete(chainId);
+        this.requestCounts.delete(chainId);
+        
+        // Recreate the provider pool
+        this.createProviderPool(network);
+        
+        // Test the new provider
+        const newProvider = this.getProvider(chainId);
+        if (newProvider) {
+          await Promise.race([
+            newProvider.getBlockNumber(),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Recovery test timeout')), 5000)
+            )
+          ]);
+          
+          console.log(`Successfully recovered network ${network.name} (${chainId})`);
+        }
+      } catch (error: any) {
+        console.warn(`Failed to recover network ${network.name} (${chainId}):`, error?.message || error);
+      }
+    }
+  }
+
+  /**
+   * Circuit breaker pattern implementation for network requests
+   */
+  public isCircuitOpen(chainId: number): boolean {
+    const pool = this.providers.get(chainId);
+    if (!pool) return true;
+
+    const health = pool.health;
+    const now = Date.now();
+    const timeSinceLastCheck = now - health.lastChecked;
+    
+    // Circuit is open if:
+    // 1. Error count is very high (>= 10)
+    // 2. Network has been unhealthy for more than 5 minutes
+    const isCircuitOpen = health.errorCount >= 10 || 
+                         (!health.isHealthy && timeSinceLastCheck > 300000);
+    
+    if (isCircuitOpen) {
+      const networkName = Object.values(SUPPORTED_NETWORKS).find(n => n.id === chainId)?.name || 'Unknown';
+      console.warn(`Circuit breaker OPEN for network ${networkName} (${chainId}). Error count: ${health.errorCount}, Time since last check: ${timeSinceLastCheck}ms`);
+    }
+    
+    return isCircuitOpen;
+  }
+
+  /**
+   * Attempts to close the circuit breaker by testing network connectivity
+   */
+  public async attemptCircuitClose(chainId: number): Promise<boolean> {
+    if (!this.isCircuitOpen(chainId)) {
+      return true; // Circuit is already closed
+    }
+
+    const networkName = Object.values(SUPPORTED_NETWORKS).find(n => n.id === chainId)?.name || 'Unknown';
+    console.log(`Attempting to close circuit breaker for network ${networkName} (${chainId})`);
+
+    try {
+      // Try to recover the network first
+      await this.recoverUnhealthyNetworks();
+      
+      // Test connectivity
+      const result = await this.validateNetworkConnectivity(chainId);
+      if (result.isValid) {
+        const pool = this.providers.get(chainId);
+        if (pool) {
+          pool.health.errorCount = 0;
+          pool.health.isHealthy = true;
+          pool.health.lastChecked = Date.now();
+          console.log(`Circuit breaker CLOSED for network ${networkName} (${chainId})`);
+          return true;
+        }
+      }
+    } catch (error: any) {
+      console.warn(`Failed to close circuit breaker for network ${networkName} (${chainId}):`, error?.message || error);
+    }
+
+    return false;
+  }
+
+  public destroy(): void {
+    this.stopHealthChecking();
+    
     // Clean up providers
     this.providers.forEach(pool => {
       pool.primary.destroy();

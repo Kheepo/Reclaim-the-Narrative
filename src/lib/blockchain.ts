@@ -208,11 +208,90 @@ export const NETWORKS: Record<string, NetworkConfig> = {
 };
 
 /**
- * Get the current network configuration
+ * Get the current network configuration with robust error handling
  */
 export function getCurrentNetwork(): NetworkConfig {
-  const networkName = process.env.NEXT_PUBLIC_NETWORK || 'mumbai';
-  return NETWORKS[networkName];
+  const networkName = process.env.NEXT_PUBLIC_NETWORK || 'amoy';
+  
+  // Define fallback priority order
+  const fallbackOrder = [
+    networkName,
+    process.env.NODE_ENV === 'production' ? 'polygon' : 'amoy', // Primary fallback
+    'amoy', // Testnet fallback
+    'polygon', // Mainnet fallback
+    'blockdag_testnet', // BlockDAG testnet fallback
+    'blockdag_mainnet' // BlockDAG mainnet fallback
+  ];
+  
+  // Remove duplicates while preserving order
+  const uniqueFallbacks = [...new Set(fallbackOrder)];
+  
+  const configurationIssues: string[] = [];
+  
+  for (const fallbackName of uniqueFallbacks) {
+    if (NETWORKS[fallbackName]) {
+      const network = NETWORKS[fallbackName];
+      
+      // Enhanced validation with detailed error reporting
+      const validationErrors: string[] = [];
+      
+      if (!network.rpcUrl || network.rpcUrl === 'undefined' || network.rpcUrl === 'null' || network.rpcUrl.trim() === '') {
+        validationErrors.push('missing or invalid RPC URL');
+      }
+      
+      if (!network.chainId || network.chainId <= 0) {
+        validationErrors.push('missing or invalid chain ID');
+      }
+      
+      if (!network.contractAddress || network.contractAddress === 'undefined' || network.contractAddress === 'null' || network.contractAddress.trim() === '') {
+        validationErrors.push('missing contract address');
+      }
+      
+      if (validationErrors.length === 0) {
+        if (fallbackName !== networkName) {
+          console.warn(`Network '${networkName}' not available. Using fallback: ${fallbackName}`);
+        }
+        return network;
+      } else {
+        const errorMsg = `Network '${fallbackName}' has configuration issues: ${validationErrors.join(', ')}`;
+        console.warn(errorMsg);
+        configurationIssues.push(errorMsg);
+      }
+    } else {
+      const errorMsg = `Network '${fallbackName}' is not defined in NETWORKS configuration`;
+      console.warn(errorMsg);
+      configurationIssues.push(errorMsg);
+    }
+  }
+  
+  // If no valid network found, provide comprehensive error with actionable guidance
+  const availableNetworks = Object.keys(NETWORKS).filter(name => {
+    const net = NETWORKS[name];
+    return net.rpcUrl && net.chainId && net.rpcUrl !== 'undefined' && net.rpcUrl !== 'null' && 
+           net.contractAddress && net.contractAddress !== 'undefined' && net.contractAddress !== 'null';
+  });
+  
+  const errorMessage = [
+    `❌ No valid network configuration found.`,
+    `🎯 Requested network: '${networkName}'`,
+    `📋 Configuration issues found:`,
+    ...configurationIssues.map(issue => `   • ${issue}`),
+    ``,
+    `✅ Available networks: [${availableNetworks.join(', ')}]`,
+    ``,
+    `🔧 To fix this issue:`,
+    `   1. Check your .env.local file`,
+    `   2. Ensure RPC URLs are properly configured (NEXT_PUBLIC_RPC_URL_*)`,
+    `   3. Ensure contract addresses are set (NEXT_PUBLIC_CONTRACT_ADDRESS_*)`,
+    `   4. Verify the NEXT_PUBLIC_NETWORK environment variable`,
+    ``,
+    `📖 Example .env.local configuration:`,
+    `   NEXT_PUBLIC_NETWORK=amoy`,
+    `   NEXT_PUBLIC_RPC_URL_AMOY=https://rpc-amoy.polygon.technology/`,
+    `   NEXT_PUBLIC_CONTRACT_ADDRESS_AMOY=0x...`
+  ].join('\n');
+  
+  throw new NetworkError(errorMessage);
 }
 
 /**
@@ -518,27 +597,75 @@ export async function connectWallet(): Promise<ethers.Signer> {
       throw error;
     }
     
-    // Handle MetaMask specific errors
+    // Handle MetaMask specific errors with enhanced guidance
     if (error.code === 4001) {
-      throw new WalletError('Connection was rejected by user', 'USER_REJECTED', error);
+      const userRejectedMsg = [
+        '❌ Connection was rejected by user',
+        '',
+        '💡 To connect your wallet:',
+        '   1. Click the wallet extension icon',
+        '   2. Select "Connect" when prompted',
+        '   3. Choose the account you want to use',
+        '   4. Click "Connect" to approve the connection'
+      ].join('\n');
+      throw new WalletError(userRejectedMsg, 'USER_REJECTED', error);
     }
     
     if (error.code === -32002) {
-      throw new WalletError('Connection request is already pending. Please check your wallet.', 'REQUEST_PENDING', error);
+      const pendingRequestMsg = [
+        '❌ Connection request is already pending',
+        '',
+        '🔧 To resolve this:',
+        '   1. Check your wallet extension for pending requests',
+        '   2. Approve or reject any pending connections',
+        '   3. Try connecting again',
+        '   4. If stuck, refresh the page and try again'
+      ].join('\n');
+      throw new WalletError(pendingRequestMsg, 'REQUEST_PENDING', error);
     }
     
     if (error.code === -32603) {
-      throw new WalletError('Internal wallet error. Please try again.', 'INTERNAL_ERROR', error);
+      const internalErrorMsg = [
+        '❌ Internal wallet error occurred',
+        '',
+        '🔧 Troubleshooting steps:',
+        '   1. Refresh the page and try again',
+        '   2. Restart your wallet extension',
+        '   3. Clear browser cache and cookies',
+        '   4. Update your wallet to the latest version'
+      ].join('\n');
+      throw new WalletError(internalErrorMsg, 'INTERNAL_ERROR', error);
     }
     
     // Handle network errors
     if (error.message?.includes('network') || error.message?.includes('RPC')) {
-      throw new NetworkError(`Network error: ${error.message}`, undefined, error);
+      const networkErrorMsg = [
+        `❌ Network error: ${error.message}`,
+        '',
+        '🔧 Network troubleshooting:',
+        '   1. Check your internet connection',
+        '   2. Verify RPC URL configuration',
+        '   3. Try switching to a different network',
+        '   4. Contact support if the issue persists'
+      ].join('\n');
+      throw new NetworkError(networkErrorMsg, undefined, error);
     }
     
-    // Generic error fallback
+    // Generic error fallback with guidance
+    const genericErrorMsg = [
+      `❌ Failed to connect wallet: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      '',
+      '🔧 General troubleshooting:',
+      '   1. Ensure your wallet extension is installed and unlocked',
+      '   2. Refresh the page and try again',
+      '   3. Check browser console for additional error details',
+      '   4. Try using a different browser or device',
+      '',
+      '💡 If you need help, please contact support with the error details above.'
+    ].join('\n');
+    
     throw new WalletError(
-      `Failed to connect wallet: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      genericErrorMsg,
       'UNKNOWN_ERROR',
       error instanceof Error ? error : undefined
     );
@@ -569,24 +696,87 @@ export async function switchNetwork(chainId: number): Promise<void> {
       });
       console.log(`✅ Successfully switched to network ${chainId} (fallback)`);
     } catch (fallbackError: any) {
-      // If the network doesn't exist, add it
+      console.error(`❌ Failed to switch to network ${chainId}:`, fallbackError);
+      
+      // Handle specific MetaMask errors with enhanced guidance
       if (fallbackError.code === 4902) {
         const networkConfig = getNetworkById(chainId);
         if (networkConfig) {
-          await addNetworkToWallet(networkConfig);
-          console.log(`✅ Added and switched to network ${chainId}`);
+          const networkNotAddedMsg = [
+            `❌ Network ${networkConfig.displayName} is not added to your wallet`,
+            '',
+            '🔧 To add this network:',
+            '   1. Open your wallet extension',
+            '   2. Go to Settings > Networks',
+            '   3. Click "Add Network" or "Custom RPC"',
+            '   4. Enter the following details:',
+            `      • Network Name: ${networkConfig.displayName}`,
+            `      • RPC URL: ${networkConfig.rpcUrl}`,
+            `      • Chain ID: ${networkConfig.id}`,
+            `      • Currency Symbol: ${networkConfig.nativeCurrency.symbol}`,
+            '   5. Save and try switching again'
+          ].join('\n');
+          
+          try {
+            await addNetworkToWallet(networkConfig);
+            console.log(`✅ Added and switched to network ${chainId}`);
+          } catch (addError) {
+            throw new NetworkError(networkNotAddedMsg, chainId, addError);
+          }
         } else {
           // Try legacy network config
           const legacyNetwork = Object.values(NETWORKS).find(n => n.chainId === chainId);
           if (legacyNetwork) {
-            await addNetwork(legacyNetwork);
-            console.log(`✅ Added and switched to network ${chainId} (legacy)`);
+            const legacyNetworkNotAddedMsg = [
+              `❌ Network ${legacyNetwork.name} is not added to your wallet`,
+              '',
+              '🔧 To add this network:',
+              '   1. Open your wallet extension',
+              '   2. Go to Settings > Networks',
+              '   3. Click "Add Network" or "Custom RPC"',
+              '   4. Enter the following details:',
+              `      • Network Name: ${legacyNetwork.name}`,
+              `      • RPC URL: ${legacyNetwork.rpcUrl}`,
+              `      • Chain ID: ${legacyNetwork.chainId}`,
+              '   5. Save and try switching again'
+            ].join('\n');
+            
+            try {
+              await addNetwork(legacyNetwork);
+              console.log(`✅ Added and switched to network ${chainId} (legacy)`);
+            } catch (addError) {
+              throw new NetworkError(legacyNetworkNotAddedMsg, chainId, addError);
+            }
           } else {
-            throw new Error(`Network ${chainId} not found in configuration`);
+            throw new NetworkError(`Network ${chainId} not found in configuration`, chainId);
           }
         }
+      } else if (fallbackError.code === 4001) {
+        const userRejectedMsg = [
+          '❌ Network switch was rejected by user',
+          '',
+          '💡 To switch networks:',
+          '   1. Click your wallet extension',
+          '   2. When prompted to switch networks, click "Switch"',
+          '   3. Confirm the network change',
+          '   4. Wait for the switch to complete'
+        ].join('\n');
+        
+        throw new NetworkError(userRejectedMsg, chainId, fallbackError);
       } else {
-        throw fallbackError;
+        const genericSwitchErrorMsg = [
+          `❌ Failed to switch to network ${chainId}: ${fallbackError.message || 'Unknown error'}`,
+          '',
+          '🔧 Troubleshooting steps:',
+          '   1. Ensure your wallet is unlocked',
+          '   2. Check if the network is properly configured',
+          '   3. Try refreshing the page and switching again',
+          '   4. Restart your wallet extension if needed',
+          '',
+          '💡 If the problem persists, contact support with the error details above.'
+        ].join('\n');
+        
+        throw new NetworkError(genericSwitchErrorMsg, chainId, fallbackError);
       }
     }
   }
@@ -904,11 +1094,29 @@ export async function checkNetworkStatus(): Promise<{
       const errorMessage = error?.message || 'Unknown error';
       console.error(`❌ Network diagnostic failed (attempt ${attempt}/${maxRetries}):`, errorMessage);
       
-      // If this is the last attempt, return error response
+      // If this is the last attempt, return enhanced error response
       if (attempt === maxRetries) {
+        const enhancedError = [
+          `❌ Network diagnostic failed after ${maxRetries} attempts`,
+          `🔍 Last error: ${errorMessage}`,
+          ``,
+          `🔧 Troubleshooting steps:`,
+          `   1. Check your internet connection`,
+          `   2. Verify RPC URL configuration in .env.local`,
+          `   3. Ensure the selected network is available`,
+          `   4. Try switching to a different network`,
+          `   5. Check if your wallet is connected properly`,
+          ``,
+          `📋 Current configuration:`,
+          `   • Network: ${process.env.NEXT_PUBLIC_NETWORK || 'amoy'}`,
+          `   • Environment: ${process.env.NODE_ENV || 'development'}`,
+          ``,
+          `💡 If the issue persists, try refreshing the page or reconnecting your wallet.`
+        ].join('\n');
+        
         return {
           ...defaultResponse,
-          error: `Network diagnostic failed after ${maxRetries} attempts: ${errorMessage}`
+          error: enhancedError
         };
       }
       
@@ -933,20 +1141,41 @@ async function validateAndGetProvider(): Promise<ethers.JsonRpcProvider | null> 
   try {
     const provider = getProvider();
     if (!provider) {
-      throw new Error('Provider is null or undefined');
+      const errorMsg = [
+        '❌ Provider initialization failed',
+        '',
+        '🔧 Possible causes:',
+        '   • Invalid RPC URL configuration',
+        '   • Network configuration missing',
+        '   • Environment variables not set properly',
+        '',
+        '💡 Check your .env.local file and ensure all required variables are set'
+      ].join('\n');
+      throw new Error(errorMsg);
     }
     
     // Test provider connectivity with timeout
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Provider connection timeout')), 10000)
+      setTimeout(() => reject(new Error('Provider connection timeout (10s) - RPC endpoint may be unreachable')), 10000)
     );
     
     const connectivityTest = provider.getBlockNumber();
     await Promise.race([connectivityTest, timeoutPromise]);
     
     return provider;
-  } catch (error) {
-    console.error('Provider validation failed:', error);
+  } catch (error: any) {
+    const enhancedError = [
+      '❌ Provider validation failed',
+      `🔍 Error: ${error?.message || 'Unknown error'}`,
+      '',
+      '🔧 Troubleshooting:',
+      '   1. Verify RPC URL is accessible',
+      '   2. Check network configuration',
+      '   3. Ensure environment variables are correct',
+      '   4. Try a different RPC endpoint if available'
+    ].join('\n');
+    
+    console.error(enhancedError);
     return null;
   }
 }
