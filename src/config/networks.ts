@@ -14,19 +14,26 @@ export interface NetworkConfig {
   testnet: boolean;
   enabled: boolean;
   features: {
-    eip1559: boolean;
-    multicall: boolean;
-    ensSupport: boolean;
+    eip1559?: boolean;
+    multicall?: boolean;
+    ensSupport?: boolean;
+    // BlockDAG-specific features
+    dagConsensus?: boolean;
+    parallelProcessing?: boolean;
+    instantFinality?: boolean;
+    // Additional Ethereum features
+    ensRegistry?: boolean;
   };
   performance: {
     avgBlockTime: number; // in seconds
     tps: number; // transactions per second
-    finality: 'instant' | 'fast' | 'standard';
+    finality: 'instant' | 'fast' | 'standard' | 'probabilistic';
   };
   contracts?: {
     gbvRegistry?: string;
     multicall?: string;
   };
+  contractAddress?: string; // For backward compatibility
 }
 
 export interface BlockDAGNetworkConfig extends NetworkConfig {
@@ -59,11 +66,17 @@ export const BLOCKDAG_TESTNET: BlockDAGNetworkConfig = {
     decimals: 18,
   },
   contractAddress: process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_BLOCKDAG_TESTNET || process.env.NEXT_PUBLIC_BLOCKDAG_TESTNET_CONTRACT_ADDRESS || '',
+  testnet: true,
   enabled: true,
   features: {
     dagConsensus: true,
     parallelProcessing: true,
     instantFinality: true,
+  },
+  dagFeatures: {
+    parallelProcessing: true,
+    powConsensus: true,
+    evmCompatibility: true,
   },
   performance: {
     avgBlockTime: 100,
@@ -85,11 +98,17 @@ export const BLOCKDAG_MAINNET: BlockDAGNetworkConfig = {
     decimals: 18,
   },
   contractAddress: process.env.NEXT_PUBLIC_CONTRACT_ADDRESS_BLOCKDAG_MAINNET || process.env.NEXT_PUBLIC_BLOCKDAG_MAINNET_CONTRACT_ADDRESS || '',
+  testnet: false,
   enabled: true,
   features: {
     dagConsensus: true,
     parallelProcessing: true,
     instantFinality: true,
+  },
+  dagFeatures: {
+    parallelProcessing: true,
+    powConsensus: true,
+    evmCompatibility: true,
   },
   performance: {
     avgBlockTime: 100,

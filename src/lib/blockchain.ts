@@ -721,7 +721,7 @@ export async function switchNetwork(chainId: number): Promise<void> {
             await addNetworkToWallet(networkConfig);
             console.log(`✅ Added and switched to network ${chainId}`);
           } catch (addError) {
-            throw new NetworkError(networkNotAddedMsg, chainId, addError);
+            throw new NetworkError(networkNotAddedMsg, chainId, addError as Error);
           }
         } else {
           // Try legacy network config
@@ -745,7 +745,7 @@ export async function switchNetwork(chainId: number): Promise<void> {
               await addNetwork(legacyNetwork);
               console.log(`✅ Added and switched to network ${chainId} (legacy)`);
             } catch (addError) {
-              throw new NetworkError(legacyNetworkNotAddedMsg, chainId, addError);
+              throw new NetworkError(legacyNetworkNotAddedMsg, chainId, addError as Error);
             }
           } else {
             throw new NetworkError(`Network ${chainId} not found in configuration`, chainId);
