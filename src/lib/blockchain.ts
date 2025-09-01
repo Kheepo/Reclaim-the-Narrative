@@ -834,7 +834,7 @@ export async function submitReport(
 }
 
 /**
- * Network diagnostic utility to check connection and chain status
+ * Network diagnostic utility to check connection and chain status with comprehensive error handling
  */
 export async function checkNetworkStatus(): Promise<{
   isConnected: boolean;
@@ -847,64 +847,255 @@ export async function checkNetworkStatus(): Promise<{
   walletBalance?: string;
   error?: string;
 }> {
-  try {
-    console.log('🔍 Starting network diagnostic...');
-    
-    // Check provider connection
-    const provider = getProvider();
-    const network = await provider.getNetwork();
-    const blockNumber = await provider.getBlockNumber();
-    const feeData = await provider.getFeeData();
-    
-    console.log('🌐 Network status:', {
-      chainId: network.chainId,
-      name: network.name,
-      blockNumber,
-      gasPrice: feeData.gasPrice?.toString()
-    });
-    
-    let walletInfo = {
-      walletConnected: false,
-      walletAddress: undefined as string | undefined,
-      walletBalance: undefined as string | undefined
-    };
-    
-    // Try to get wallet info
+  const maxRetries = 3;
+  const retryDelay = 1000; // Start with 1 second
+  
+  // Default safe response structure
+  const defaultResponse = {
+    isConnected: false,
+    chainId: 0,
+    networkName: 'Unknown',
+    blockNumber: 0,
+    gasPrice: 'Unknown',
+    walletConnected: false,
+    walletAddress: undefined,
+    walletBalance: undefined
+  };
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const signer = await connectWallet();
-      const address = await signer.getAddress();
-      const balance = await provider.getBalance(address);
+      console.log(`🔍 Starting network diagnostic (attempt ${attempt}/${maxRetries})...`);
       
-      walletInfo = {
-        walletConnected: true,
-        walletAddress: address,
-        walletBalance: ethers.formatEther(balance) + ' ETH'
+      // Validate and get provider with timeout
+      const provider = await validateAndGetProvider();
+      if (!provider) {
+        throw new Error('Failed to initialize network provider');
+      }
+      
+      // Get network information with proper validation
+      const networkInfo = await getNetworkInfoSafely(provider);
+      if (!networkInfo.success) {
+        throw new Error(networkInfo.error || 'Failed to retrieve network information');
+      }
+      
+      // Get blockchain data with validation
+      const blockchainData = await getBlockchainDataSafely(provider);
+      
+      console.log('🌐 Network status:', {
+        chainId: networkInfo.chainId,
+        name: networkInfo.networkName,
+        blockNumber: blockchainData.blockNumber,
+        gasPrice: blockchainData.gasPrice
+      });
+      
+      // Try to get wallet info (non-critical)
+      const walletInfo = await getWalletInfoSafely(provider);
+      
+      return {
+        isConnected: true,
+        chainId: networkInfo.chainId,
+        networkName: networkInfo.networkName,
+        blockNumber: blockchainData.blockNumber,
+        gasPrice: blockchainData.gasPrice,
+        ...walletInfo
       };
       
-      console.log('👛 Wallet info:', walletInfo);
-    } catch (walletError) {
-      console.log('⚠️ Wallet not connected or error:', walletError);
+    } catch (error: any) {
+      const errorMessage = error?.message || 'Unknown error';
+      console.error(`❌ Network diagnostic failed (attempt ${attempt}/${maxRetries}):`, errorMessage);
+      
+      // If this is the last attempt, return error response
+      if (attempt === maxRetries) {
+        return {
+          ...defaultResponse,
+          error: `Network diagnostic failed after ${maxRetries} attempts: ${errorMessage}`
+        };
+      }
+      
+      // Wait before retry with exponential backoff
+      const delay = retryDelay * Math.pow(2, attempt - 1);
+      console.log(`⏳ Retrying in ${delay}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  // Fallback return (should not reach here)
+  return {
+    ...defaultResponse,
+    error: 'Network diagnostic failed: Maximum retries exceeded'
+  };
+}
+
+/**
+ * Safely validate and get provider with timeout
+ */
+async function validateAndGetProvider(): Promise<ethers.JsonRpcProvider | null> {
+  try {
+    const provider = getProvider();
+    if (!provider) {
+      throw new Error('Provider is null or undefined');
+    }
+    
+    // Test provider connectivity with timeout
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Provider connection timeout')), 10000)
+    );
+    
+    const connectivityTest = provider.getBlockNumber();
+    await Promise.race([connectivityTest, timeoutPromise]);
+    
+    return provider;
+  } catch (error) {
+    console.error('Provider validation failed:', error);
+    return null;
+  }
+}
+
+/**
+ * Safely get network information with comprehensive validation
+ */
+async function getNetworkInfoSafely(provider: ethers.JsonRpcProvider): Promise<{
+  success: boolean;
+  chainId: number;
+  networkName: string;
+  error?: string;
+}> {
+  try {
+    const network = await provider.getNetwork();
+    
+    // Validate network object
+    if (!network) {
+      return {
+        success: false,
+        chainId: 0,
+        networkName: 'Unknown',
+        error: 'Network object is null or undefined'
+      };
+    }
+    
+    // Validate chainId
+    const chainId = network.chainId;
+    if (chainId === undefined || chainId === null) {
+      return {
+        success: false,
+        chainId: 0,
+        networkName: network.name || 'Unknown',
+        error: 'Network chainId is undefined or null'
+      };
+    }
+    
+    // Convert chainId to number safely
+    let chainIdNumber: number;
+    try {
+      chainIdNumber = Number(chainId);
+      if (isNaN(chainIdNumber) || chainIdNumber <= 0) {
+        throw new Error('Invalid chainId format');
+      }
+    } catch (conversionError) {
+      return {
+        success: false,
+        chainId: 0,
+        networkName: network.name || 'Unknown',
+        error: `Failed to convert chainId to number: ${conversionError}`
+      };
     }
     
     return {
-      isConnected: true,
-      chainId: Number(network.chainId),
-      networkName: network.name,
-      blockNumber,
-      gasPrice: feeData.gasPrice?.toString() || 'Unknown',
-      ...walletInfo
+      success: true,
+      chainId: chainIdNumber,
+      networkName: network.name || `Chain ${chainIdNumber}`
     };
+    
   } catch (error: any) {
-    console.error('❌ Network diagnostic failed:', error);
     return {
-      isConnected: false,
+      success: false,
       chainId: 0,
       networkName: 'Unknown',
-      blockNumber: 0,
-      gasPrice: 'Unknown',
-      walletConnected: false,
-      error: error.message
+      error: `Failed to get network info: ${error?.message || 'Unknown error'}`
     };
+  }
+}
+
+/**
+ * Safely get blockchain data (block number and gas price)
+ */
+async function getBlockchainDataSafely(provider: ethers.JsonRpcProvider): Promise<{
+  blockNumber: number;
+  gasPrice: string;
+}> {
+  let blockNumber = 0;
+  let gasPrice = 'Unknown';
+  
+  try {
+    // Get block number with timeout
+    const blockNumberPromise = provider.getBlockNumber();
+    const timeoutPromise = new Promise<number>((_, reject) => 
+      setTimeout(() => reject(new Error('Block number timeout')), 5000)
+    );
+    
+    blockNumber = await Promise.race([blockNumberPromise, timeoutPromise]);
+  } catch (error) {
+    console.warn('Failed to get block number:', error);
+  }
+  
+  try {
+    // Get fee data with timeout
+    const feeDataPromise = provider.getFeeData();
+    const timeoutPromise = new Promise<ethers.FeeData>((_, reject) => 
+      setTimeout(() => reject(new Error('Fee data timeout')), 5000)
+    );
+    
+    const feeData = await Promise.race([feeDataPromise, timeoutPromise]);
+    if (feeData?.gasPrice) {
+      gasPrice = feeData.gasPrice.toString();
+    }
+  } catch (error) {
+    console.warn('Failed to get gas price:', error);
+  }
+  
+  return { blockNumber, gasPrice };
+}
+
+/**
+ * Safely get wallet information (non-critical operation)
+ */
+async function getWalletInfoSafely(provider: ethers.JsonRpcProvider): Promise<{
+  walletConnected: boolean;
+  walletAddress?: string;
+  walletBalance?: string;
+}> {
+  const defaultWalletInfo = {
+    walletConnected: false,
+    walletAddress: undefined,
+    walletBalance: undefined
+  };
+  
+  try {
+    const signer = await connectWallet();
+    if (!signer) {
+      return defaultWalletInfo;
+    }
+    
+    const address = await signer.getAddress();
+    if (!address) {
+      return defaultWalletInfo;
+    }
+    
+    const balance = await provider.getBalance(address);
+    const balanceFormatted = balance ? ethers.formatEther(balance) + ' ETH' : 'Unknown';
+    
+    const walletInfo = {
+      walletConnected: true,
+      walletAddress: address,
+      walletBalance: balanceFormatted
+    };
+    
+    console.log('👛 Wallet info:', walletInfo);
+    return walletInfo;
+    
+  } catch (walletError) {
+    console.log('⚠️ Wallet not connected or error:', walletError);
+    return defaultWalletInfo;
   }
 }
 

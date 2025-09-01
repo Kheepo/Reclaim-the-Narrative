@@ -12,6 +12,9 @@ interface NetworkStatus {
   walletAddress?: string;
   walletBalance?: string;
   error?: string;
+  retryCount?: number;
+  lastAttempt?: number;
+  errorType?: 'network' | 'provider' | 'wallet' | 'timeout' | 'unknown';
 }
 
 export function NetworkDiagnostic() {
@@ -22,12 +25,44 @@ export function NetworkDiagnostic() {
 
   const runDiagnostic = async () => {
     setLoading(true);
+    setStatus(null); // Clear previous status
+    
     try {
+      console.log('🔍 Starting network diagnostic...');
       const result = await checkNetworkStatus();
       setStatus(result);
-      console.log('Network diagnostic result:', result);
+      console.log('✅ Network diagnostic completed:', result);
+      
+      // Log specific issues if any
+      if (result.error) {
+        console.warn('⚠️ Diagnostic completed with warnings:', result.error);
+      }
+      if (!result.isConnected) {
+        console.warn('🔌 Network connection issue detected');
+      }
+      if (!result.walletConnected) {
+        console.info('👛 Wallet not connected (this is normal if no wallet is installed)');
+      }
     } catch (error) {
-      console.error('Diagnostic failed:', error);
+      console.error('💥 Diagnostic failed completely:', error);
+      
+      // Determine error type for better user feedback
+      let errorType: 'network' | 'provider' | 'wallet' | 'timeout' | 'unknown' = 'unknown';
+      let errorMessage = 'Unknown error occurred';
+      
+      if (error instanceof Error) {
+        errorMessage = error.message;
+        if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
+          errorType = 'timeout';
+        } else if (errorMessage.includes('network') || errorMessage.includes('Network')) {
+          errorType = 'network';
+        } else if (errorMessage.includes('provider') || errorMessage.includes('Provider')) {
+          errorType = 'provider';
+        } else if (errorMessage.includes('wallet') || errorMessage.includes('Wallet')) {
+          errorType = 'wallet';
+        }
+      }
+      
       setStatus({
         isConnected: false,
         chainId: 0,
@@ -35,7 +70,9 @@ export function NetworkDiagnostic() {
         blockNumber: 0,
         gasPrice: 'Unknown',
         walletConnected: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: errorMessage,
+        errorType,
+        lastAttempt: Date.now()
       });
     } finally {
       setLoading(false);
@@ -170,9 +207,36 @@ export function NetworkDiagnostic() {
 
             {status.error && (
               <div className="space-y-2">
-                <h3 className="font-semibold text-sm text-red-600">Error</h3>
-                <div className="bg-red-50 p-3 rounded-lg text-sm text-red-700">
-                  {status.error}
+                <h3 className="font-semibold text-sm text-red-600">Error Details</h3>
+                <div className="bg-red-50 p-3 rounded-lg text-sm text-red-700 space-y-2">
+                  <div className="font-medium">
+                    {status.errorType === 'timeout' && '⏱️ Connection Timeout'}
+                    {status.errorType === 'network' && '🌐 Network Error'}
+                    {status.errorType === 'provider' && '🔌 Provider Error'}
+                    {status.errorType === 'wallet' && '👛 Wallet Error'}
+                    {status.errorType === 'unknown' && '❓ Unknown Error'}
+                  </div>
+                  <div>{status.error}</div>
+                  {status.errorType === 'timeout' && (
+                    <div className="text-xs mt-2 p-2 bg-yellow-50 text-yellow-700 rounded border">
+                      💡 <strong>Tip:</strong> Network connection is slow. Try again or check your internet connection.
+                    </div>
+                  )}
+                  {status.errorType === 'provider' && (
+                    <div className="text-xs mt-2 p-2 bg-blue-50 text-blue-700 rounded border">
+                      💡 <strong>Tip:</strong> Make sure you have a Web3 wallet (like MetaMask) installed and connected.
+                    </div>
+                  )}
+                  {status.errorType === 'network' && (
+                    <div className="text-xs mt-2 p-2 bg-purple-50 text-purple-700 rounded border">
+                      💡 <strong>Tip:</strong> Check if you're connected to the correct blockchain network.
+                    </div>
+                  )}
+                  {status.lastAttempt && (
+                    <div className="text-xs text-gray-500 mt-1">
+                      Last attempt: {new Date(status.lastAttempt).toLocaleTimeString()}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
