@@ -82,6 +82,7 @@ import {
   IPFSUploadResult
 } from '../lib/ipfs';
 import { uploadToIPFS } from '../lib/enhanced-ipfs';
+import { NetworkDiagnostic } from '../components/NetworkDiagnostic';
 import { 
   SubmissionManager, 
   SessionManager, 
@@ -2150,6 +2151,13 @@ export default function SubmitPage() {
                 </p>
               </div>
             )}
+          </FadeIn>
+        )}
+
+        {/* Network Diagnostic - Show when there's an error */}
+        {submitStatus?.type === 'error' && (
+          <FadeIn className="mt-8">
+            <NetworkDiagnostic />
           </FadeIn>
         )}
       </main>

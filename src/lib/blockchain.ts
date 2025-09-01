@@ -645,28 +645,120 @@ export async function addNetwork(network: NetworkConfig): Promise<void> {
 }
 
 /**
- * Submit a report to the blockchain with enhanced gas configuration
+ * Retry mechanism with exponential backoff
+ */
+export async function retryWithBackoff<T>(
+  operation: () => Promise<T>,
+  maxRetries: number = 3,
+  baseDelay: number = 1000,
+  onRetry?: (attempt: number, error: Error) => void
+): Promise<T> {
+  let lastError: Error;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error as Error;
+      
+      // Don't retry for user rejection or certain critical errors
+      const errorMessage = lastError.message.toLowerCase();
+      if (
+        errorMessage.includes('user rejected') ||
+        errorMessage.includes('user denied') ||
+        errorMessage.includes('insufficient funds') ||
+        errorMessage.includes('insufficient balance')
+      ) {
+        console.log(`🚫 Non-retryable error on attempt ${attempt}: ${lastError.message}`);
+        throw lastError;
+      }
+      
+      if (attempt === maxRetries) {
+        console.log(`❌ Final attempt ${attempt} failed: ${lastError.message}`);
+        throw lastError;
+      }
+      
+      // Calculate delay with exponential backoff and jitter
+      const delay = baseDelay * Math.pow(2, attempt - 1) + Math.random() * 1000;
+      
+      console.log(`⚠️ Attempt ${attempt} failed: ${lastError.message}. Retrying in ${Math.round(delay)}ms...`);
+      onRetry?.(attempt, lastError);
+      
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  throw lastError!;
+}
+
+/**
+ * Submit a report to the blockchain with enhanced gas configuration and retry mechanism
  */
 export async function submitReport(
-  reportHash: string,
-  ipfsCIDs: string[],
-  signer: ethers.Signer
-): Promise<TransactionResult> {
-  try {
-    const contract = getContract(signer);
-    const provider = getProvider();
+  reportData: {
+    title: string;
+    description: string;
+    category: string;
+    location: string;
+    timestamp: number;
+    ipfsHash: string;
+    isAnonymous: boolean;
+  },
+  onProgress?: (step: string) => void
+): Promise<string> {
+  return await retryWithBackoff(
+    async () => {
+      onProgress?.('Initializing blockchain submission...');
+      console.log('🔄 Starting blockchain submission process');
+      
+      const provider = getProvider();
+      const signer = await connectWallet();
+      const contract = getContract(signer);
+    
+    // Get current network info
+    const network = await provider.getNetwork();
+    const signerAddress = await signer.getAddress();
+    const balance = await provider.getBalance(signerAddress);
+    
+    console.log('📊 Network and wallet info:', {
+      chainId: network.chainId,
+      name: network.name,
+      walletAddress: signerAddress,
+      balance: ethers.formatEther(balance) + ' ETH'
+    });
+    
+    // Check if we have sufficient balance
+    if (balance === BigInt(0)) {
+      throw new Error('Wallet has zero balance. Please add funds to your wallet.');
+    }
+    
+    onProgress?.('Estimating gas requirements...');
+    console.log('⛽ Starting gas estimation...');
     
     // Convert report hash to bytes32
-    const reportHashBytes32 = ethers.keccak256(ethers.toUtf8Bytes(reportHash));
+    const reportHashBytes32 = ethers.keccak256(ethers.toUtf8Bytes(reportData.ipfsHash));
     
-    // Estimate gas for the transaction
-    const gasEstimate = await contract.submitReport.estimateGas(reportHashBytes32, ipfsCIDs);
+    // Enhanced gas estimation with buffer
+    let gasEstimate;
+    try {
+      gasEstimate = await contract.submitReport.estimateGas(reportHashBytes32, [reportData.ipfsHash]);
+      console.log('✅ Gas estimate successful:', gasEstimate.toString());
+    } catch (estimateError: any) {
+      console.error('❌ Gas estimation failed:', estimateError);
+      throw new Error(`Gas estimation failed: ${estimateError.message}. The transaction may be invalid.`);
+    }
     
-    // Add 20% buffer to gas limit to prevent out-of-gas errors
-    const gasLimit = (gasEstimate * BigInt(120)) / BigInt(100);
+    // Add 50% buffer to gas limit for network congestion
+    const gasLimit = (gasEstimate * BigInt(150)) / BigInt(100);
+    console.log('📈 Gas limit with 50% buffer:', gasLimit.toString());
     
     // Get current network fee data
     const feeData = await provider.getFeeData();
+    console.log('💰 Current fee data:', {
+      gasPrice: feeData.gasPrice?.toString(),
+      maxFeePerGas: feeData.maxFeePerGas?.toString(),
+      maxPriorityFeePerGas: feeData.maxPriorityFeePerGas?.toString()
+    });
     
     // Prepare transaction options with enhanced gas configuration
     const txOptions: any = {
@@ -676,53 +768,160 @@ export async function submitReport(
     // Check if network supports EIP-1559 (has maxFeePerGas)
     if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
       // Use EIP-1559 gas pricing for better reliability
-      txOptions.maxFeePerGas = feeData.maxFeePerGas;
-      txOptions.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
+      txOptions.maxFeePerGas = (feeData.maxFeePerGas * BigInt(120)) / BigInt(100);
+      txOptions.maxPriorityFeePerGas = (feeData.maxPriorityFeePerGas * BigInt(120)) / BigInt(100);
+      console.log('🚀 Using EIP-1559 gas config:', {
+        maxFeePerGas: txOptions.maxFeePerGas.toString(),
+        maxPriorityFeePerGas: txOptions.maxPriorityFeePerGas.toString(),
+        gasLimit: txOptions.gasLimit.toString()
+      });
     } else if (feeData.gasPrice) {
-      // Fallback to legacy gas pricing with 10% buffer
-      txOptions.gasPrice = (feeData.gasPrice * BigInt(110)) / BigInt(100);
+      // Fallback to legacy gas pricing with 20% buffer
+      txOptions.gasPrice = (feeData.gasPrice * BigInt(120)) / BigInt(100);
+      console.log('🔧 Using legacy gas config:', {
+        gasPrice: txOptions.gasPrice.toString(),
+        gasLimit: txOptions.gasLimit.toString()
+      });
+    } else {
+      throw new Error('Unable to determine gas pricing. Please try again.');
     }
     
-    console.log('Transaction options:', {
-      gasLimit: gasLimit.toString(),
-      maxFeePerGas: txOptions.maxFeePerGas?.toString(),
-      maxPriorityFeePerGas: txOptions.maxPriorityFeePerGas?.toString(),
-      gasPrice: txOptions.gasPrice?.toString()
-    });
+    // Calculate total transaction cost
+    const estimatedCost = txOptions.maxFeePerGas 
+      ? txOptions.maxFeePerGas * gasLimit
+      : txOptions.gasPrice * gasLimit;
+    
+    console.log('💸 Estimated transaction cost:', ethers.formatEther(estimatedCost) + ' ETH');
+    
+    // Check if we have enough balance for the transaction
+    if (balance < estimatedCost) {
+      throw new Error(`Insufficient balance. Required: ${ethers.formatEther(estimatedCost)} ETH, Available: ${ethers.formatEther(balance)} ETH`);
+    }
+    
+    onProgress?.('Submitting transaction to blockchain...');
+    console.log('📤 Submitting transaction with config:', txOptions);
     
     // Submit the transaction with enhanced gas configuration
-    const tx = await contract.submitReport(reportHashBytes32, ipfsCIDs, txOptions);
+    const tx = await contract.submitReport(reportHashBytes32, [reportData.ipfsHash], txOptions);
+    
+    console.log('✅ Transaction submitted successfully:', {
+      hash: tx.hash,
+      nonce: tx.nonce,
+      gasLimit: tx.gasLimit?.toString(),
+      gasPrice: tx.gasPrice?.toString(),
+      maxFeePerGas: tx.maxFeePerGas?.toString(),
+      maxPriorityFeePerGas: tx.maxPriorityFeePerGas?.toString()
+    });
+    
+    onProgress?.('Waiting for transaction confirmation...');
+    console.log('⏳ Waiting for transaction confirmation...');
     
     // Wait for confirmation
     const receipt = await tx.wait();
-    
-    return {
-      hash: tx.hash,
+    console.log('🎉 Transaction confirmed:', {
+      hash: receipt.hash,
       blockNumber: receipt.blockNumber,
-      gasUsed: receipt.gasUsed.toString(),
+      gasUsed: receipt.gasUsed?.toString(),
+      effectiveGasPrice: receipt.gasPrice?.toString(),
       status: receipt.status
-    };
-  } catch (error) {
-    console.error('Failed to submit report:', error);
+    });
     
-    // Enhanced error handling for gas-related failures
-    if (error instanceof Error) {
+    return tx.hash;
+  }, {
+    maxRetries: 3,
+    baseDelay: 2000,
+    maxDelay: 10000,
+    shouldRetry: (error: Error) => {
       const errorMessage = error.message.toLowerCase();
-      
-      if (errorMessage.includes('insufficient funds') || errorMessage.includes('insufficient balance')) {
-        throw new Error('Insufficient funds to pay for gas. Please add more funds to your wallet.');
-      } else if (errorMessage.includes('gas') && errorMessage.includes('limit')) {
-        throw new Error('Transaction failed due to gas limit. The operation requires more gas than estimated.');
-      } else if (errorMessage.includes('gas price') || errorMessage.includes('fee too low')) {
-        throw new Error('Gas price too low. Network congestion may require higher gas fees.');
-      } else if (errorMessage.includes('nonce')) {
-        throw new Error('Transaction nonce error. Please try again or reset your wallet.');
-      } else if (errorMessage.includes('network') || errorMessage.includes('timeout')) {
-        throw new Error('Network error or timeout. Please check your connection and try again.');
+      // Don't retry user rejections or insufficient funds
+      if (errorMessage.includes('user rejected') || 
+          errorMessage.includes('user denied') ||
+          errorMessage.includes('insufficient funds') ||
+          errorMessage.includes('insufficient balance')) {
+        return false;
       }
+      // Retry network errors, gas issues, nonce problems
+      return errorMessage.includes('network') ||
+             errorMessage.includes('timeout') ||
+             errorMessage.includes('gas') ||
+             errorMessage.includes('nonce') ||
+             errorMessage.includes('replacement');
+    }
+  });
+}
+
+/**
+ * Network diagnostic utility to check connection and chain status
+ */
+export async function checkNetworkStatus(): Promise<{
+  isConnected: boolean;
+  chainId: number;
+  networkName: string;
+  blockNumber: number;
+  gasPrice: string;
+  walletConnected: boolean;
+  walletAddress?: string;
+  walletBalance?: string;
+  error?: string;
+}> {
+  try {
+    console.log('🔍 Starting network diagnostic...');
+    
+    // Check provider connection
+    const provider = getProvider();
+    const network = await provider.getNetwork();
+    const blockNumber = await provider.getBlockNumber();
+    const feeData = await provider.getFeeData();
+    
+    console.log('🌐 Network status:', {
+      chainId: network.chainId,
+      name: network.name,
+      blockNumber,
+      gasPrice: feeData.gasPrice?.toString()
+    });
+    
+    let walletInfo = {
+      walletConnected: false,
+      walletAddress: undefined as string | undefined,
+      walletBalance: undefined as string | undefined
+    };
+    
+    // Try to get wallet info
+    try {
+      const signer = await connectWallet();
+      const address = await signer.getAddress();
+      const balance = await provider.getBalance(address);
+      
+      walletInfo = {
+        walletConnected: true,
+        walletAddress: address,
+        walletBalance: ethers.formatEther(balance) + ' ETH'
+      };
+      
+      console.log('👛 Wallet info:', walletInfo);
+    } catch (walletError) {
+      console.log('⚠️ Wallet not connected or error:', walletError);
     }
     
-    throw new Error(`Failed to submit report: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    return {
+      isConnected: true,
+      chainId: Number(network.chainId),
+      networkName: network.name,
+      blockNumber,
+      gasPrice: feeData.gasPrice?.toString() || 'Unknown',
+      ...walletInfo
+    };
+  } catch (error: any) {
+    console.error('❌ Network diagnostic failed:', error);
+    return {
+      isConnected: false,
+      chainId: 0,
+      networkName: 'Unknown',
+      blockNumber: 0,
+      gasPrice: 'Unknown',
+      walletConnected: false,
+      error: error.message
+    };
   }
 }
 
@@ -743,8 +942,8 @@ export async function estimateSubmitReportGas(
     // Estimate gas for the transaction
     const gasEstimate = await contract.submitReport.estimateGas(reportHashBytes32, ipfsCIDs);
     
-    // Add 20% buffer to gas estimate to match submitReport function
-    const gasWithBuffer = (gasEstimate * BigInt(120)) / BigInt(100);
+    // Add 50% buffer to gas estimate for network congestion
+    const gasWithBuffer = (gasEstimate * BigInt(150)) / BigInt(100);
     
     return gasWithBuffer;
   } catch (error) {
