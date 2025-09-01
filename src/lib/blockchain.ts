@@ -645,7 +645,7 @@ export async function addNetwork(network: NetworkConfig): Promise<void> {
 }
 
 /**
- * Submit a report to the blockchain
+ * Submit a report to the blockchain with enhanced gas configuration
  */
 export async function submitReport(
   reportHash: string,
@@ -654,12 +654,44 @@ export async function submitReport(
 ): Promise<TransactionResult> {
   try {
     const contract = getContract(signer);
+    const provider = getProvider();
     
     // Convert report hash to bytes32
     const reportHashBytes32 = ethers.keccak256(ethers.toUtf8Bytes(reportHash));
     
-    // Submit the transaction
-    const tx = await contract.submitReport(reportHashBytes32, ipfsCIDs);
+    // Estimate gas for the transaction
+    const gasEstimate = await contract.submitReport.estimateGas(reportHashBytes32, ipfsCIDs);
+    
+    // Add 20% buffer to gas limit to prevent out-of-gas errors
+    const gasLimit = (gasEstimate * BigInt(120)) / BigInt(100);
+    
+    // Get current network fee data
+    const feeData = await provider.getFeeData();
+    
+    // Prepare transaction options with enhanced gas configuration
+    const txOptions: any = {
+      gasLimit: gasLimit
+    };
+    
+    // Check if network supports EIP-1559 (has maxFeePerGas)
+    if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+      // Use EIP-1559 gas pricing for better reliability
+      txOptions.maxFeePerGas = feeData.maxFeePerGas;
+      txOptions.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
+    } else if (feeData.gasPrice) {
+      // Fallback to legacy gas pricing with 10% buffer
+      txOptions.gasPrice = (feeData.gasPrice * BigInt(110)) / BigInt(100);
+    }
+    
+    console.log('Transaction options:', {
+      gasLimit: gasLimit.toString(),
+      maxFeePerGas: txOptions.maxFeePerGas?.toString(),
+      maxPriorityFeePerGas: txOptions.maxPriorityFeePerGas?.toString(),
+      gasPrice: txOptions.gasPrice?.toString()
+    });
+    
+    // Submit the transaction with enhanced gas configuration
+    const tx = await contract.submitReport(reportHashBytes32, ipfsCIDs, txOptions);
     
     // Wait for confirmation
     const receipt = await tx.wait();
@@ -672,12 +704,30 @@ export async function submitReport(
     };
   } catch (error) {
     console.error('Failed to submit report:', error);
+    
+    // Enhanced error handling for gas-related failures
+    if (error instanceof Error) {
+      const errorMessage = error.message.toLowerCase();
+      
+      if (errorMessage.includes('insufficient funds') || errorMessage.includes('insufficient balance')) {
+        throw new Error('Insufficient funds to pay for gas. Please add more funds to your wallet.');
+      } else if (errorMessage.includes('gas') && errorMessage.includes('limit')) {
+        throw new Error('Transaction failed due to gas limit. The operation requires more gas than estimated.');
+      } else if (errorMessage.includes('gas price') || errorMessage.includes('fee too low')) {
+        throw new Error('Gas price too low. Network congestion may require higher gas fees.');
+      } else if (errorMessage.includes('nonce')) {
+        throw new Error('Transaction nonce error. Please try again or reset your wallet.');
+      } else if (errorMessage.includes('network') || errorMessage.includes('timeout')) {
+        throw new Error('Network error or timeout. Please check your connection and try again.');
+      }
+    }
+    
     throw new Error(`Failed to submit report: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
 /**
- * Estimate gas for submitting a report to the blockchain
+ * Estimate gas for submitting a report to the blockchain with buffer
  */
 export async function estimateSubmitReportGas(
   reportHash: string,
@@ -693,9 +743,26 @@ export async function estimateSubmitReportGas(
     // Estimate gas for the transaction
     const gasEstimate = await contract.submitReport.estimateGas(reportHashBytes32, ipfsCIDs);
     
-    return gasEstimate;
+    // Add 20% buffer to gas estimate to match submitReport function
+    const gasWithBuffer = (gasEstimate * BigInt(120)) / BigInt(100);
+    
+    return gasWithBuffer;
   } catch (error) {
     console.error('Failed to estimate gas for report submission:', error);
+    
+    // Enhanced error handling for gas estimation failures
+    if (error instanceof Error) {
+      const errorMessage = error.message.toLowerCase();
+      
+      if (errorMessage.includes('insufficient funds') || errorMessage.includes('insufficient balance')) {
+        throw new Error('Insufficient funds to estimate gas. Please add more funds to your wallet.');
+      } else if (errorMessage.includes('revert') || errorMessage.includes('execution reverted')) {
+        throw new Error('Transaction would fail. Please check your inputs and try again.');
+      } else if (errorMessage.includes('network') || errorMessage.includes('timeout')) {
+        throw new Error('Network error during gas estimation. Please check your connection and try again.');
+      }
+    }
+    
     throw new Error(`Failed to estimate gas: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
