@@ -1274,10 +1274,18 @@ export default function SubmitPage() {
               );
             }
             
-            const result = await submitReport(reportHash, allHashes, walletConnection);
+            const result = await submitReport({
+              title: formData.title,
+              description: formData.description,
+              category: formData.category,
+              location: formData.location,
+              timestamp: Date.now(),
+              ipfsHash: reportHash,
+              isAnonymous: true
+            });
             
             // Validate transaction result
-            if (!result || !result.hash) {
+            if (!result || typeof result !== 'string') {
               throw createEnhancedError(
                 'Invalid transaction result',
                 ErrorCategory.BLOCKCHAIN,
@@ -1382,7 +1390,7 @@ export default function SubmitPage() {
         }
       );
       
-      const txHash = txResult.hash;
+      const txHash = txResult;
       setTransactionHash(txHash);
       
       info('Transaction submitted to blockchain successfully');

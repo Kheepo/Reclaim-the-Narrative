@@ -827,26 +827,9 @@ export async function submitReport(
     });
     
     return tx.hash;
-  }, {
-    maxRetries: 3,
-    baseDelay: 2000,
-    maxDelay: 10000,
-    shouldRetry: (error: Error) => {
-      const errorMessage = error.message.toLowerCase();
-      // Don't retry user rejections or insufficient funds
-      if (errorMessage.includes('user rejected') || 
-          errorMessage.includes('user denied') ||
-          errorMessage.includes('insufficient funds') ||
-          errorMessage.includes('insufficient balance')) {
-        return false;
-      }
-      // Retry network errors, gas issues, nonce problems
-      return errorMessage.includes('network') ||
-             errorMessage.includes('timeout') ||
-             errorMessage.includes('gas') ||
-             errorMessage.includes('nonce') ||
-             errorMessage.includes('replacement');
-    }
+  }, 3, 2000, (attempt: number, error: Error) => {
+    console.log(`🔄 Blockchain submission retry attempt ${attempt}:`, error.message);
+    onProgress?.(`Retrying submission (attempt ${attempt})...`);
   });
 }
 
