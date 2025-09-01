@@ -43,6 +43,79 @@ export interface IPFSGateway {
   supportsUpload: boolean;
 }
 
+// Configuration validation interfaces
+interface PinataConfigValidation {
+  isValid: boolean;
+  error?: string;
+  details?: string;
+}
+
+/**
+ * Validate Pinata API configuration
+ */
+function validatePinataConfig(apiKey?: string, secretKey?: string): PinataConfigValidation {
+  if (!apiKey || !secretKey) {
+    return {
+      isValid: false,
+      error: 'Missing API keys',
+      details: 'Both REACT_APP_PINATA_API_KEY and REACT_APP_PINATA_SECRET_KEY must be set'
+    };
+  }
+  
+  // Check for placeholder values
+  const placeholderValues = [
+    'your_pinata_api_key_here',
+    'your_pinata_secret_key_here',
+    'pk_placeholder',
+    'sk_placeholder',
+    'your_api_key',
+    'your_secret_key'
+  ];
+  
+  if (placeholderValues.includes(apiKey) || placeholderValues.includes(secretKey)) {
+    return {
+      isValid: false,
+      error: 'Placeholder values detected',
+      details: 'API keys contain placeholder values. Please update with actual Pinata credentials'
+    };
+  }
+  
+  // Basic format validation
+  if (apiKey.length < 10 || secretKey.length < 10) {
+    return {
+      isValid: false,
+      error: 'Invalid key format',
+      details: 'API keys appear to be too short. Please verify your Pinata credentials'
+    };
+  }
+  
+  return { isValid: true };
+}
+
+/**
+ * Generate detailed error message for configuration issues
+ */
+function generateConfigurationErrorMessage(pinataConfig: PinataConfigValidation): string {
+  const baseMessage = 'IPFS upload service unavailable.';
+  
+  if (!pinataConfig.isValid) {
+    const setupInstructions = [
+      '\n\nTo fix this issue:',
+      '1. Visit https://app.pinata.cloud/ to create an account',
+      '2. Generate API keys with pinFileToIPFS permissions',
+      '3. Update your .env file with the actual API keys:',
+      '   REACT_APP_PINATA_API_KEY=your_actual_api_key',
+      '   REACT_APP_PINATA_SECRET_KEY=your_actual_secret_key',
+      '4. Restart your development server',
+      '\nFor detailed instructions, see IPFS_SETUP_GUIDE.md'
+    ].join('\n');
+    
+    return `${baseMessage} ${pinataConfig.error}: ${pinataConfig.details}${setupInstructions}`;
+  }
+  
+  return `${baseMessage} Please configure Web3.Storage or check your network connection.`;
+}
+
 // IPFS Gateway configurations - Updated with working gateways
 const IPFS_GATEWAYS: IPFSGateway[] = [
   {
@@ -298,13 +371,19 @@ async function uploadWithProgress(
   const { onProgress, timeout, metadata } = options;
   
   // Try Web3.Storage first (using new Storacha Network authentication)
-  try {
-    // Import the main IPFS functions that handle proper authentication
-    const { uploadToIPFS: mainUploadToIPFS, isWeb3StorageConfigured } = await import('./ipfs');
+    try {
+      // Import the main IPFS functions that handle proper authentication
+      const { 
+        uploadToIPFS: mainUploadToIPFS, 
+        isWeb3StorageConfigured,
+        validateWeb3StorageConfig,
+        generateWeb3StorageErrorMessage,
+        checkWeb3StorageStatus
+      } = await import('./ipfs');
     
     // Check if Web3.Storage is properly configured
-    const isConfigured = await isWeb3StorageConfigured();
-    if (isConfigured) {
+    const status = await checkWeb3StorageStatus();
+    if (status.configured && status.hasSpaces) {
       console.log('[Enhanced IPFS] Using Web3.Storage via main IPFS module');
       
       // Use the main uploadToIPFS function which handles proper authentication
@@ -335,6 +414,11 @@ async function uploadWithProgress(
          uploadTime: result.uploadTime || 0,
          verified: result.verified || false
        };
+    } else {
+      console.log('[Enhanced IPFS] Web3.Storage not configured, will try Pinata fallback');
+      if (status.error) {
+        console.warn('[Enhanced IPFS] Web3.Storage status error:', status.error);
+      }
     }
   } catch (error) {
     console.warn('Web3.Storage upload failed, trying alternatives:', error);
@@ -343,9 +427,13 @@ async function uploadWithProgress(
   // Try Pinata as fallback
   const pinataKey = process.env.REACT_APP_PINATA_API_KEY;
   const pinataSecret = process.env.REACT_APP_PINATA_SECRET_KEY;
-  if (pinataKey && pinataSecret) {
+  
+  // Validate Pinata configuration
+  const pinataConfigured = validatePinataConfig(pinataKey, pinataSecret);
+  
+  if (pinataConfigured.isValid) {
     try {
-      return await uploadToPinata(file, originalHash, pinataKey, pinataSecret, {
+      return await uploadToPinata(file, originalHash, pinataKey!, pinataSecret!, {
         onProgress,
         timeout,
         metadata
@@ -353,12 +441,41 @@ async function uploadWithProgress(
     } catch (error) {
       console.warn('Pinata upload failed:', error);
     }
+  } else {
+    console.warn('Pinata not configured:', pinataConfigured.error);
   }
   
+  // Generate comprehensive error message for all failed services
+  let errorMessage = `IPFS upload failed after trying all available services:\n\n`;
+  
+  // Add Web3.Storage error details
+  errorMessage += `Web3.Storage: Service not configured or unavailable\n`;
+  
+  // Add Pinata error details
+  if (pinataConfigured.isValid) {
+    errorMessage += `\nPinata: Upload attempt failed\n`;
+  } else {
+    errorMessage += `\nPinata: ${pinataConfigured.error} - ${pinataConfigured.details}\n`;
+  }
+  
+  errorMessage += `\n\nRecommended Actions:\n` +
+    `1. Check your internet connection\n` +
+    `2. Configure at least one IPFS service (see IPFS_SETUP_GUIDE.md)\n` +
+    `3. For immediate resolution, set up Pinata API keys (faster setup)\n` +
+    `4. For long-term use, consider Web3.Storage (free, decentralized)\n\n` +
+    `If the issue persists, please contact support with the error details above.`;
+  
   throw createEnhancedError(
-    'No IPFS upload service available. Please configure Web3.Storage or Pinata API keys.',
+    errorMessage,
     ErrorCategory.IPFS,
-    { operation: 'no_upload_service' }
+    { 
+      operation: 'no_upload_service',
+      additionalData: {
+        pinataConfigured: pinataConfigured.isValid,
+        pinataError: pinataConfigured.error,
+        setupGuide: 'See IPFS_SETUP_GUIDE.md for configuration instructions'
+      }
+    }
   );
 }
 

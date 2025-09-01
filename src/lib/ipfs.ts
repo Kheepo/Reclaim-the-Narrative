@@ -169,33 +169,58 @@ export async function initializeWeb3Storage(): Promise<Client.Client> {
   }
 }
 
+/**
+ * Validate Web3.Storage configuration
+ */
+export const validateWeb3StorageConfig = (): { isValid: boolean; message: string } => {
+  // Web3.Storage uses email-based authentication, no API keys needed
+  return {
+    isValid: true,
+    message: 'Web3.Storage uses email-based authentication - no API keys required'
+  }
+}
+
+/**
+ * Generate Web3.Storage configuration error message
+ */
+export const generateWeb3StorageErrorMessage = (error: string): string => {
+  return `Web3.Storage Configuration Issue: ${error}\n\n` +
+    'Web3.Storage Setup Instructions:\n' +
+    '1. Web3.Storage uses email-based authentication\n' +
+    '2. No API keys are required\n' +
+    '3. You will receive a verification email during setup\n' +
+    '4. Click the verification link in your email\n' +
+    '5. Return to the application to complete setup\n\n' +
+    'For detailed setup instructions, see: IPFS_SETUP_GUIDE.md\n\n' +
+    'If you continue to experience issues, try:\n' +
+    '• Check your email (including spam folder)\n' +
+    '• Ensure you have a stable internet connection\n' +
+    '• Wait a few minutes and try again'
+}
+
 // Setup function for initial configuration (should be called once)
 export const setupWeb3Storage = async (email: string, spaceName: string = 'GBV-Reporting-Platform', maxRetries: number = 3): Promise<{ success: boolean; message: string; needsVerification?: boolean }> => {
   console.log(`[Web3.Storage Setup] Starting setup for email: ${email}`)
-  console.debug('[IPFS] Starting setupWeb3Storage function')
+  console.log(`[Web3.Storage Setup] Space name: ${spaceName}`)
+  
+  // Validate email format
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  if (!emailRegex.test(email)) {
+    const errorMsg = 'Invalid email address format'
+    console.error(`[Web3.Storage Setup] ${errorMsg}`)
+    return {
+      success: false,
+      message: generateWeb3StorageErrorMessage(errorMsg)
+    }
+  }
   
   try {
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    if (!emailRegex.test(email)) {
-      console.error(`[Web3.Storage Setup] Invalid email format: ${email}`)
-      return { success: false, message: 'Please enter a valid email address' }
-    }
-    
-    console.log(`[Web3.Storage Setup] Email validation passed for: ${email}`)
-    
-    // Check if already configured
+    // First check if already configured
     try {
-      console.debug('[IPFS] Checking existing Web3.Storage status')
       const status = await checkWeb3StorageStatus()
       if (status.configured && status.hasSpaces) {
-        console.log('[Web3.Storage Setup] Already configured with spaces, skipping setup')
-        return { success: true, message: 'Web3.Storage is already configured' }
-      }
-      if (status.configured && !status.hasSpaces) {
-        console.log('[Web3.Storage Setup] Account exists but no spaces, will create space')
-        await createWeb3StorageSpace(spaceName)
-        return { success: true, message: 'Space created successfully' }
+        console.log('[Web3.Storage Setup] Already configured and has spaces')
+        return { success: true, message: 'Web3.Storage is already configured and ready to use' }
       }
     } catch (statusError) {
       console.log('[Web3.Storage Setup] Status check failed, proceeding with setup:', statusError)
@@ -250,16 +275,25 @@ export const setupWeb3Storage = async (email: string, spaceName: string = 'GBV-R
             console.log(`[IPFS] Rate limited, waiting ${waitTime/1000}s before retry...`)
             
             if (attempt === maxRetries) {
-              return { success: false, message: 'Rate limited. Please wait 5-10 minutes before trying again.' }
+              return { 
+                success: false, 
+                message: generateWeb3StorageErrorMessage('Rate limited. Please wait 5-10 minutes before trying again.')
+              }
             }
             
             await new Promise(resolve => setTimeout(resolve, waitTime))
             continue
           } else if (loginError.message.includes('invalid email') || loginError.message.includes('malformed')) {
-            return { success: false, message: 'Invalid email address format. Please check and try again.' }
+            return { 
+              success: false, 
+              message: generateWeb3StorageErrorMessage('Invalid email address format. Please check and try again.')
+            }
           } else if (loginError.message.includes('network') || loginError.message.includes('fetch')) {
             if (attempt === maxRetries) {
-              return { success: false, message: 'Network error. Please check your internet connection and try again.' }
+              return { 
+                success: false, 
+                message: generateWeb3StorageErrorMessage('Network error. Please check your internet connection and try again.')
+              }
             }
             console.log(`[IPFS] Network error, retrying in ${attempt * 2}s...`)
             console.debug(`[IPFS] Waiting before retry ${attempt}`)
@@ -303,14 +337,18 @@ export const setupWeb3Storage = async (email: string, spaceName: string = 'GBV-R
     // If we get here, all retries failed
     return { 
       success: false, 
-      message: `Failed to send verification email after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}. Please try again later or contact support if the issue persists.` 
+      message: generateWeb3StorageErrorMessage(
+        `Failed to send verification email after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}. Please try again later or contact support if the issue persists.`
+      )
     }
     
   } catch (error) {
     console.error('[Web3.Storage Setup] Setup failed:', error)
     return { 
       success: false, 
-      message: `Setup failed: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again later.` 
+      message: generateWeb3StorageErrorMessage(
+        `Setup failed: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again later.`
+      )
     }
   }
 }
